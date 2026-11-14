@@ -1,0 +1,24 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- This offline CommonJS runner compiles the TS helper without a test framework. */
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const ts = require("typescript");
+const Module = require("node:module");
+const path = require("node:path");
+const filename = path.resolve("lib/receipt-validation.ts");
+const js = ts.transpileModule(fs.readFileSync(filename, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const mod = new Module(filename, module);
+mod._compile(js, filename);
+const { validDate, normalizeReceipt, UnsupportedCurrencyError } = mod.exports;
+assert.equal(validDate("2024-02-29"), "2024-02-29");
+for (const date of ["2026-02-29", "2026-04-31", "2026-13-01", "18/10/2026", null]) assert.equal(validDate(date), null);
+for (const total of [0, -1, Infinity, "93", 100000000, 1.234]) assert.equal(normalizeReceipt({ total }).total, null);
+assert.equal(normalizeReceipt({ total: 99999999.99 }).total, 99999999.99);
+assert.equal(normalizeReceipt({ currency: "บาท", total: 93 }).currency, "THB");
+assert.equal(normalizeReceipt({ currency: null }).currency, null);
+assert.throws(() => normalizeReceipt({ currency: "USD" }), UnsupportedCurrencyError);
+assert.throws(() => normalizeReceipt([]));
+assert.equal(normalizeReceipt({ category: "equipment" }).category, "Equipment");
+assert.equal(normalizeReceipt({ category: "Shopping" }).category, null);
+assert.equal(normalizeReceipt({ confidence: 2 }).confidence, null);
+assert.equal(normalizeReceipt({ confidence: 0 }).confidence, 0);
+console.log("Receipt validation edge cases passed (offline).");
