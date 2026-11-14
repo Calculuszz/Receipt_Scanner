@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase-browser";
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -29,7 +30,9 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen">
       <header className="flex items-center justify-between border-b px-4 py-3">
-        <span className="font-semibold">Receipt Scanner</span>
+        <Link href="/" className="font-semibold hover:opacity-80">
+          Receipt Scanner
+        </Link>
         <div className="flex items-center gap-3 text-sm">
           <span className="hidden opacity-60 sm:inline">{email}</span>
           <button onClick={logout} className="rounded border px-3 py-1">

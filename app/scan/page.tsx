@@ -1,5 +1,6 @@
 "use client";
 import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 async function resizePhoto(file: File): Promise<Blob> {
@@ -265,6 +266,9 @@ export default function ScanPage() {
   return (
     <main className="mx-auto w-full max-w-2xl space-y-8 p-6">
       <header>
+        <Link href="/" className="mb-3 inline-block text-sm opacity-70 hover:opacity-100">
+          ← Back to expenses
+        </Link>
         <h1 className="text-2xl font-semibold">Scan receipt</h1>
         <p className="mt-2">Upload a receipt photo, then review its details.</p>
       </header>
