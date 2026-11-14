@@ -23,6 +23,14 @@ function formatDate(d: string | null) {
   });
 }
 
+// Turn Gemini's 0–1 confidence into plain words for non-technical users.
+function describeScan(confidence: number | null) {
+  if (confidence === null) return null;
+  if (confidence >= 0.8) return { text: "Read clearly", warn: false };
+  if (confidence >= 0.5) return { text: "Partly unclear. Check the details against the photo.", warn: true };
+  return { text: "Hard to read. Check every field against the photo.", warn: true };
+}
+
 function formatDateTime(ts: string) {
   return new Date(ts).toLocaleString("en-GB", {
     day: "numeric",
@@ -195,7 +203,7 @@ export default function ReceiptDetail() {
   if (!receipt) return null;
 
   const category = categories.find((c) => c.id === receipt.category_id);
-  const lowConfidence = receipt.ai_confidence !== null && receipt.ai_confidence < 0.6;
+  const scanQuality = describeScan(receipt.ai_confidence);
 
   return (
     <div className="flex flex-col gap-4">
@@ -352,12 +360,8 @@ export default function ReceiptDetail() {
             <Row label="Date" value={formatDate(receipt.receipt_date)} />
             <Row label="Category" value={category?.name ?? "No category"} />
             <Row label="Note" value={receipt.note || "—"} />
-            {receipt.ai_confidence !== null && (
-              <Row
-                label="AI confidence"
-                value={`${Math.round(receipt.ai_confidence * 100)}%${lowConfidence ? " · check the details" : ""}`}
-                warn={lowConfidence}
-              />
+            {scanQuality && (
+              <Row label="Scan check" value={scanQuality.text} warn={scanQuality.warn} />
             )}
             <Row label="Saved" value={formatDateTime(receipt.created_at)} />
             {receipt.updated_at !== receipt.created_at && (
