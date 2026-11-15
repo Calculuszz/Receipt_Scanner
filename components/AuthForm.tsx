@@ -113,6 +113,15 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
           </button>
         </div>
 
+        {mode === "login" && (
+          <Link
+            href="/forgot-password"
+            className="text-right text-sm text-blue-600 underline"
+          >
+            ลืมรหัสผ่าน?
+          </Link>
+        )}
+
         {error && <p className="text-sm text-red-500">{error}</p>}
         {info && <p className="text-sm text-green-600">{info}</p>}
 
