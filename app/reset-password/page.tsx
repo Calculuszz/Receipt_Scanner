@@ -56,7 +56,7 @@ export default function ResetPasswordPage() {
       <form onSubmit={save} noValidate className="anim-fade flex flex-col">
         <h1 className="text-[30px] font-semibold tracking-[-0.035em]">Set a new password</h1>
         <p className="mt-2 text-muted">You&apos;ll use it the next time you log in.</p>
-        <label className="mt-8 flex min-h-[54px] items-center gap-3 rounded-[20px] bg-surface px-4">
+        <label className="field-card mt-8 flex min-h-[54px] items-center gap-3 rounded-[20px] bg-surface px-4 transition-shadow">
           <span className="w-[78px] shrink-0 text-[15px]">Password</span>
           <input type={showPw ? "text" : "password"} autoComplete="new-password" value={password}
             onChange={(e) => { setPassword(e.target.value); setError(""); }}

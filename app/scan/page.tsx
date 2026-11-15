@@ -439,7 +439,7 @@ function ScanScreen() {
                   )}
                   {isPdf && preview && <PdfReceiptPreview url={preview} sourcePages={draft.sourcePages} index={index} />}
 
-                  <label className="block rounded-[20px] bg-surface p-4">
+                  <label className="field-card block rounded-[20px] bg-surface p-4 transition-shadow">
                     <span className="block text-[13px] text-muted">Total paid</span>
                     <span className="mt-1 flex items-baseline gap-1">
                       <span className="text-[30px] font-medium">฿</span>
@@ -449,7 +449,7 @@ function ScanScreen() {
                     </span>
                   </label>
 
-                  <div className="rounded-[20px] bg-surface px-4">
+                  <div className="field-card rounded-[20px] bg-surface px-4 transition-shadow">
                     <label className="flex min-h-[52px] items-center gap-3 border-b border-line">
                       <span className="w-[72px] shrink-0 text-[15px]">Shop</span>
                       <input className={rowInput} value={draft.shopName} placeholder="Shop name" onChange={(event) => update(draft.id, { shopName: event.target.value })} />
