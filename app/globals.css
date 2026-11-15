@@ -1,26 +1,104 @@
 @import "tailwindcss";
 
+/* `dark:` follows the app's own theme (set on <html data-theme>), not only the OS */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Light theme (default) */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+  --bg: #f3f3ef;
+  --surface: #ffffff;
+  --surface2: #e6e6e1;
+  --text: #111113;
+  --muted: #606067;
+  --line: rgba(0, 0, 0, 0.08);
+  --press: rgba(0, 0, 0, 0.04);
+  --danger: #c8261b;
+  --warn-bg: #fff0d2;
+  --warn-text: #734600;
+  --ok: #057040;
+}
+
+/* Dark theme */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e0e0f;
+  --surface: #1b1b1d;
+  --surface2: #2a2a2e;
+  --text: #f5f5f2;
+  --muted: #a0a0a6;
+  --line: rgba(255, 255, 255, 0.08);
+  --press: rgba(255, 255, 255, 0.06);
+  --danger: #ff6a5e;
+  --warn-bg: #33270f;
+  --warn-text: #ffc66b;
+  --ok: #22d27f;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface2: var(--surface2);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-danger: var(--danger);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-fg: var(--warn-text);
+  --color-ok: var(--ok);
+  --color-brand: #22d27f;
+  --color-ink: #0e0e0f;
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+:focus-visible {
+  outline: 2px solid #0eb6f2;
+  outline-offset: 2px;
+}
+
+/* ---------- Motion (iOS-like easing) ---------- */
+.tap {
+  transition: transform 0.22s cubic-bezier(0.3, 0.7, 0.4, 1), opacity 0.22s, background-color 0.22s;
+}
+.tap:active:not(:disabled) { transform: scale(0.96); }
+.press { transition: background-color 0.2s; }
+.press:active { background: var(--press); }
+
+.anim-push { animation: rs-push 0.5s cubic-bezier(0.32, 0.72, 0, 1) both; }
+.anim-up { animation: rs-up 0.55s cubic-bezier(0.32, 0.72, 0, 1) both; }
+.anim-fade { animation: rs-fade 0.35s ease-out both; }
+.anim-rise { animation: rs-rise 0.45s cubic-bezier(0.32, 0.72, 0, 1) both; }
+.anim-sheet { animation: rs-up 0.5s cubic-bezier(0.32, 0.72, 0, 1) both; }
+.anim-dim { animation: rs-dim 0.3s ease-out both; }
+.anim-toast { animation: rs-toast 0.5s cubic-bezier(0.32, 0.72, 0, 1) both; }
+.anim-flash { animation: rs-flash 1.6s ease-out both; }
+
+@keyframes rs-push { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes rs-up { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes rs-fade { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes rs-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes rs-dim { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rs-toast { from { transform: translateY(-140%); } to { transform: none; } }
+@keyframes rs-flash { 0% { background: rgba(34, 210, 127, 0.3); } 100% { background: rgba(34, 210, 127, 0); } }
+
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
