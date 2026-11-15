@@ -25,3 +25,7 @@ Do not share output publicly: paths include user IDs. No live dry-run was perfor
 5. Only after that protocol, retention agreement and dry-run review should a deletion mode be implemented, approved, and enabled. Delete through Supabase Storage API, not by removing storage database rows.
 
 Until enabled, this is an inspection tool and preparation for scheduled cleanup; it does not fully resolve abandoned files after tab closure.
+
+## Shared PDF sources
+
+One PDF may produce multiple receipts rows with the same image_path. A saved source must be retained while ANY row refers to it. Deleting one receipt is not permission to remove its PDF. Role C's delete flow must check remaining references; coordinate concurrent save/delete behavior before automating deletion. Draft cancellation and scan failure cleanup use the same any-reference check. Source page numbers shown during review are context only and are not separately persisted in the current receipts schema.
