@@ -1,5 +1,6 @@
 // Shared UI helpers: category colours and icons, money and date formatting,
 // and a one-shot "flash" message that survives a page change (e.g. "Saved").
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Receipt } from "@/lib/types";
 
 export const ICONS = {
@@ -77,11 +78,62 @@ export function scanCheck(confidence: number | null) {
 }
 
 // ---------- Flash message across a navigation ----------
-export type Flash = { text: string; undoRow?: Receipt };
+/** month: open Home on this "YYYY-MM"; ids: rows to highlight; scanNext: offer "Scan next". */
+export type Flash = { text: string; undoRow?: Receipt; month?: string; ids?: string[]; scanNext?: boolean };
 const FLASH_KEY = "rs-flash";
 
 export function setFlash(flash: Flash) {
   try { sessionStorage.setItem(FLASH_KEY, JSON.stringify(flash)); } catch { /* storage blocked: skip the toast */ }
+}
+
+// ---------- Remember which month Home was showing ----------
+const MONTH_KEY = "rs-month";
+export function rememberMonth(ym: string) {
+  try { sessionStorage.setItem(MONTH_KEY, ym); } catch { /* not remembered */ }
+}
+export function recallMonth(): string | null {
+  try {
+    const v = sessionStorage.getItem(MONTH_KEY);
+    return v && /^\d{4}-\d{2}$/.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** "YYYY-MM" → "October" (adds the year when it isn't this year). */
+export function monthName(ym: string) {
+  const [y, m] = ym.split("-").map(Number);
+  const sameYear = y === new Date().getFullYear();
+  return new Date(y, m - 1, 1).toLocaleDateString("en-GB", sameYear ? { month: "long" } : { month: "long", year: "numeric" });
+}
+
+/** Today as "YYYY-MM-DD" in the user's own time zone. */
+export function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// ---------- "Other" with a name the user types ----------
+const PERSONAL_COLORS = ["#FF8FB1", "#7BDFF2", "#B8E986", "#F7D046", "#A0A7FF", "#FFB4A2"];
+
+type CategoryRow = { id: string; name: string; user_id: string | null };
+
+/**
+ * The user picked "Other" and typed what it was. Reuse a category with that name
+ * if one exists (theirs or a default), otherwise create a personal one.
+ */
+export async function categoryForOther(client: SupabaseClient, userId: string, typed: string, existing: CategoryRow[]) {
+  const name = typed.trim().replace(/\s+/g, " ").slice(0, 40);
+  const match = existing.find((c) => c.name.toLowerCase() === name.toLowerCase());
+  if (match) return { id: match.id, created: null };
+  const color = PERSONAL_COLORS[[...name].reduce((h, ch) => h + ch.charCodeAt(0), 0) % PERSONAL_COLORS.length];
+  const { data, error } = await client.from("categories").insert({ name, user_id: userId, color }).select("id, name, user_id").single<CategoryRow>();
+  if (error || !data) throw new Error(`Couldn't add the category "${name}". Try again.`);
+  return { id: data.id, created: { ...data, color } };
+}
+
+export function isDefaultOther(c: { name: string; user_id: string | null } | undefined) {
+  return !!c && c.user_id === null && c.name === "Other";
 }
 
 export function takeFlash(): Flash | null {
