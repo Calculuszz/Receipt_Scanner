@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase-browser";
 import type { Receipt } from "@/lib/types";
-import { ICONS, categoryStyle, money, moneyParts, takeFlash, type Flash } from "@/lib/ui";
+import { ICONS, categoryStyle, money, moneyParts, recallMonth, rememberMonth, takeFlash, type Flash } from "@/lib/ui";
 import { Icon, RoundButton, Spinner, ThemeToggle, Toast } from "@/components/ui";
 
 type CategoryInfo = { id: string; name: string; color: string | null };
@@ -53,8 +53,19 @@ export default function ExpenseList() {
   const [highlight, setHighlight] = useState<string[]>([]);
   const [now] = useState(() => new Date());
   const thisMonth = ymOf(now);
-  const [month, setMonth] = useState(thisMonth);
+  // Come back to the month you were looking at (e.g. after opening a receipt).
+  const [month, setMonth] = useState(() => {
+    const m = recallMonth();
+    return m && m <= thisMonth ? m : thisMonth;
+  });
   const [dir, setDir] = useState<"left" | "right" | null>(null);
+
+  useEffect(() => { rememberMonth(month); }, [month]);
+  useEffect(() => {
+    if (!highlight.length) return;
+    const t = setTimeout(() => setHighlight([]), 1800);
+    return () => clearTimeout(t);
+  }, [highlight]);
 
   const load = useCallback(async () => {
     try {
@@ -84,10 +95,14 @@ export default function ExpenseList() {
 
   useEffect(() => {
     // Initial data load and a one-time message left by the previous page.
+    const f = takeFlash();
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setFlash(takeFlash());
+    setFlash(f);
+    // Just saved or deleted something: show the month it belongs to.
+    if (f?.month && f.month <= thisMonth) setMonth(f.month);
+    if (f?.ids?.length) setHighlight(f.ids);
     load();
-  }, [load]);
+  }, [load, thisMonth]);
 
   const earliest = useMemo(
     () => receipts.reduce((min, r) => (monthOf(r) < min ? monthOf(r) : min), thisMonth),
@@ -173,9 +188,9 @@ export default function ExpenseList() {
       {flash && (
         <Toast
           text={flash.text}
-          ms={flash.undoRow ? 4500 : 2600}
-          actionLabel={flash.undoRow ? "Undo" : undefined}
-          onAction={flash.undoRow ? () => undoDelete(flash.undoRow!) : undefined}
+          ms={flash.undoRow || flash.scanNext ? 4500 : 2600}
+          actionLabel={flash.undoRow ? "Undo" : flash.scanNext ? "Scan next" : undefined}
+          onAction={flash.undoRow ? () => undoDelete(flash.undoRow!) : flash.scanNext ? () => router.push("/scan") : undefined}
           onDone={() => setFlash(null)}
         />
       )}

@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { normalizeDocument, scanWarning, type ScannedReceipt } from "@/lib/receipt-validation";
 import { buildReceiptBatch, saveReceiptBatch, type ReceiptBatch, type ReceiptDraft } from "@/lib/receipt-batch";
 import { prepareReceiptFile } from "@/lib/receipt-file";
-import { ICONS, setFlash } from "@/lib/ui";
+import { ICONS, categoryForOther, isDefaultOther, longDate, money, setFlash, todayIso } from "@/lib/ui";
 import { Icon, Spinner } from "@/components/ui";
 import AuthGuard from "@/components/AuthGuard";
 
@@ -50,6 +50,23 @@ function PdfReceiptPreview({ url, sourcePages, index }: { url: string; sourcePag
   );
 }
 
+type Client = ReturnType<typeof createClient>;
+
+/** Draft id → "already saved?" hint, matched on the same total and date. */
+async function findDuplicates(supabase: Client, drafts: ReceiptDraft[]): Promise<Record<string, string>> {
+  const totals = [...new Set(drafts.map((d) => Number(d.total)).filter((n) => n > 0))];
+  if (!totals.length) return {};
+  const { data } = await supabase.from("receipts").select("shop_name, receipt_date, total, created_at").in("total", totals).limit(50);
+  const out: Record<string, string> = {};
+  for (const d of drafts) {
+    const hit = (data ?? []).find((r) => Number(r.total) === Number(d.total) && (r.receipt_date ?? "") === (d.date ?? ""));
+    if (hit) {
+      out[d.id] = `You already saved a ฿${money(Number(hit.total))} receipt${hit.shop_name ? ` from ${hit.shop_name}` : ""}${hit.receipt_date ? ` dated ${longDate(hit.receipt_date)}` : ""}. Remove this one if it's the same.`;
+    }
+  }
+  return out;
+}
+
 export default function ScanPage() {
   return (
     <AuthGuard>
@@ -78,6 +95,9 @@ function ScanScreen() {
   const [notice, setNotice] = useState("");
   const [frozen, setFrozen] = useState(false);
   const [scanComplete, setScanComplete] = useState(false);
+  // Per-draft extras: the name typed for "Other", and "already saved?" hints.
+  const [otherNames, setOtherNames] = useState<Record<string, string>>({});
+  const [dupes, setDupes] = useState<Record<string, string>>({});
   const busy = phase !== "idle" && phase !== "reviewing";
 
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
@@ -227,7 +247,10 @@ function ScanScreen() {
     const { data: available, error: categoryError } = await supabase.from("categories").select("id, name, user_id").order("name");
     const items: Category[] = available ?? [];
     setCategories(items);
-    setDrafts(result.receipts.map((receipt) => toDraft(receipt, items)));
+    const newDrafts = result.receipts.map((receipt) => toDraft(receipt, items));
+    setDrafts(newDrafts);
+    setOtherNames({});
+    setDupes(await findDuplicates(supabase, newDrafts));
     setScanComplete(true);
     setNotice(categoryError ? "Categories could not be loaded. You can save without one." : "");
     setPhase("reviewing");
@@ -286,8 +309,20 @@ function ScanScreen() {
       if (!source.current || source.current.userId !== user.id) throw new Error("Use the account that scanned this file.");
       if (pending.current && pending.current.userId !== user.id) throw new Error("Sign in to the original account to check this batch.");
       if (!pending.current) {
-        const rows = buildReceiptBatch(drafts, user.id, source.current.path);
-        if (rows.some((row) => row.category_id && !categories.some((category) => category.id === row.category_id))) throw new Error("Please select a valid category.");
+        // "Other" + a typed name becomes the user's own category (reused if it exists).
+        let known = categories;
+        const resolved: ReceiptDraft[] = [];
+        for (const d of drafts) {
+          const typed = otherNames[d.id]?.trim();
+          if (typed && isDefaultOther(known.find((c) => c.id === d.categoryId))) {
+            const { id, created } = await categoryForOther(supabase, user.id, typed, known);
+            if (created) known = [...known, created];
+            resolved.push({ ...d, categoryId: id });
+          } else resolved.push(d);
+        }
+        if (known !== categories) setCategories(known);
+        const rows = buildReceiptBatch(resolved, user.id, source.current.path);
+        if (rows.some((row) => row.category_id && !known.some((category) => category.id === row.category_id))) throw new Error("Please select a valid category.");
         pending.current = { userId: user.id, rows }; setFrozen(true);
       }
       await saveReceiptBatch(pending.current.rows, {
@@ -306,10 +341,14 @@ function ScanScreen() {
         },
       });
       source.current = null;
-      const count = pending.current?.rows.length ?? drafts.length;
-      setFlash({ text: count === 1 ? "Receipt saved" : `${count} receipts saved` });
-      setNotice("Saved. Opening your expenses…");
-      router.replace("/"); router.refresh();
+      const saved = pending.current?.rows ?? [];
+      const count = saved.length;
+      setFlash({ text: count === 1 ? "Receipt saved" : `${count} receipts saved`, ids: saved.map((r) => r.id), scanNext: true });
+      // Leave this page clean, so coming back starts a fresh scan.
+      pending.current = null;
+      setFrozen(false); setFile(null); setPreview(null); setDrafts([]); setScanComplete(false);
+      setOtherNames({}); setDupes({}); setPhase("idle");
+      router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save was not confirmed. Retry to check the same batch.");
       setPhase("reviewing");
@@ -432,11 +471,13 @@ function ScanScreen() {
               return (
                 <fieldset key={draft.id} disabled={busy || frozen || cameraOpen} className="anim-rise flex min-w-0 flex-col gap-3 disabled:opacity-60" style={{ animationDelay: `${index * 60}ms` }}>
                   {drafts.length > 1 && <legend className="mx-1 mb-2.5 text-[13px] font-semibold uppercase tracking-wider text-muted">Receipt {index + 1}</legend>}
-                  {warning && (
-                    <p className="flex items-start gap-2.5 rounded-2xl bg-warn-bg px-3.5 py-3 text-sm leading-snug text-warn-fg">
-                      <Icon d={ICONS.warn} size={18} stroke={2} className="mt-px shrink-0" />{warning}
-                    </p>
-                  )}
+                  {[warning, dupes[draft.id], draft.date && draft.date > todayIso() ? "This date is in the future. Check the year on the receipt." : null]
+                    .filter(Boolean)
+                    .map((msg) => (
+                      <p key={msg} className="flex items-start gap-2.5 rounded-2xl bg-warn-bg px-3.5 py-3 text-sm leading-snug text-warn-fg">
+                        <Icon d={ICONS.warn} size={18} stroke={2} className="mt-px shrink-0" />{msg}
+                      </p>
+                    ))}
                   {isPdf && preview && <PdfReceiptPreview url={preview} sourcePages={draft.sourcePages} index={index} />}
 
                   <label className="field-card block rounded-[20px] bg-surface p-4 transition-shadow">
@@ -466,6 +507,14 @@ function ScanScreen() {
                       </select>
                       <Icon d={ICONS.chevron} size={16} stroke={2} className="shrink-0 rotate-90 text-muted" />
                     </label>
+                    {isDefaultOther(categories.find((c) => c.id === draft.categoryId)) && (
+                      <label className="anim-rise flex min-h-[52px] items-center gap-3 border-b border-line">
+                        <span className="w-[72px] shrink-0 text-[15px]">Name it</span>
+                        <input className={rowInput} value={otherNames[draft.id] ?? ""} maxLength={40} autoFocus
+                          placeholder="Club T-shirts"
+                          onChange={(event) => setOtherNames((m) => ({ ...m, [draft.id]: event.target.value }))} />
+                      </label>
+                    )}
                     <label className="flex min-h-[52px] items-center gap-3">
                       <span className="w-[72px] shrink-0 text-[15px]">Note</span>
                       <input className={rowInput} value={draft.note} placeholder="Add a note" onChange={(event) => update(draft.id, { note: event.target.value })} />

@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase-browser";
 import { validDate } from "@/lib/receipt-validation";
 import { RECEIPTS_BUCKET, type Receipt } from "@/lib/types";
-import { ICONS, categoryStyle, longDate, moneyParts, scanCheck, setFlash } from "@/lib/ui";
+import { ICONS, categoryForOther, categoryStyle, isDefaultOther, longDate, moneyParts, scanCheck, setFlash, todayIso } from "@/lib/ui";
 import { Icon, Spinner, Toast } from "@/components/ui";
 
 type CategoryInfo = { id: string; name: string; color: string; user_id: string | null };
@@ -41,6 +41,7 @@ export default function ReceiptDetail() {
 
   const [editing, setEditing] = useState(false);
   const [editCat, setEditCat] = useState("");
+  const [otherName, setOtherName] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [toast, setToast] = useState("");
@@ -95,6 +96,7 @@ export default function ReceiptDetail() {
   function startEdit() {
     if (!receipt) return;
     setEditCat(receipt.category_id ?? "");
+    setOtherName("");
     setFormError("");
     setConfirmDelete(false);
     setEditing(true);
@@ -111,17 +113,31 @@ export default function ReceiptDetail() {
 
     if (!Number.isFinite(total) || total <= 0 || total > MAX_TOTAL) return setFormError("Enter the amount paid, more than ฿0.");
     if (dateRaw && !validDate(dateRaw)) return setFormError("Enter a real date, or leave it empty.");
+    if (dateRaw && dateRaw > todayIso()) return setFormError("That date is in the future. Check the year on the receipt.");
     if (editCat && !categories.some((c) => c.id === editCat)) return setFormError("Choose a category from the list.");
 
     setSaving(true);
     setFormError("");
+    let categoryId = editCat;
+    if (otherName.trim() && isDefaultOther(categories.find((c) => c.id === editCat))) {
+      try {
+        const { data: auth } = await supabase.auth.getUser();
+        if (!auth.user) throw new Error("Please log in again.");
+        const { id: newId, created } = await categoryForOther(supabase, auth.user.id, otherName, categories);
+        if (created) setCategories((list) => [...list, created]);
+        categoryId = newId;
+      } catch (err) {
+        setSaving(false);
+        return setFormError(err instanceof Error ? err.message : "Couldn't add that category.");
+      }
+    }
     const { data: updated, error } = await supabase
       .from("receipts")
       .update({
         shop_name: shopName || null,
         receipt_date: dateRaw || null,
         total: Math.round(total * 100) / 100,
-        category_id: editCat || null,
+        category_id: categoryId || null,
         note: note || null,
       })
       .eq("id", receipt.id)
@@ -147,7 +163,7 @@ export default function ReceiptDetail() {
       setDeleteError("Couldn't delete it. Try again.");
       return;
     }
-    setFlash({ text: "Receipt deleted", undoRow: receipt });
+    setFlash({ text: "Receipt deleted", undoRow: receipt, month: (receipt.receipt_date ?? receipt.created_at.slice(0, 10)).slice(0, 7) });
     router.replace("/");
   }
 
@@ -265,6 +281,13 @@ export default function ReceiptDetail() {
                   );
                 })}
               </div>
+              {isDefaultOther(categories.find((c) => c.id === editCat)) && (
+                <label className="field-card anim-rise mt-3 flex min-h-[52px] items-center gap-3 rounded-[20px] bg-surface px-4 transition-shadow">
+                  <span className="w-16 shrink-0 text-[15px]">Name it</span>
+                  <input value={otherName} onChange={(e) => setOtherName(e.target.value)} maxLength={40} autoFocus
+                    placeholder="Club T-shirts" className="min-w-0 flex-1 bg-transparent text-right text-[15px] outline-none placeholder:text-muted" />
+                </label>
+              )}
             </fieldset>
             {formError && <p role="alert" className="anim-rise mx-1 text-sm text-danger">{formError}</p>}
             <div className="grid grid-cols-2 gap-3 pt-1">
