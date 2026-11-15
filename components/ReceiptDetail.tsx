@@ -224,7 +224,7 @@ export default function ReceiptDetail() {
 
         {editing ? (
           <form onSubmit={handleSave} onChange={() => setFormError("")} className="anim-rise flex flex-col gap-3">
-            <label className="block rounded-[20px] bg-surface p-4">
+            <label className="field-card block rounded-[20px] bg-surface p-4 transition-shadow">
               <span className="block text-[13px] text-muted">Total paid</span>
               <span className="mt-1 flex items-baseline gap-1">
                 <span className="text-[30px] font-medium">฿</span>
@@ -232,7 +232,7 @@ export default function ReceiptDetail() {
                   className="min-w-0 flex-1 bg-transparent text-[40px] font-semibold tracking-[-0.03em] tabular-nums outline-none" />
               </span>
             </label>
-            <div className="rounded-[20px] bg-surface px-4">
+            <div className="field-card rounded-[20px] bg-surface px-4 transition-shadow">
               <label className="flex min-h-[52px] items-center gap-3 border-b border-line">
                 <span className="w-16 shrink-0 text-[15px]">Shop</span>
                 <input name="shopName" defaultValue={receipt.shop_name ?? ""} placeholder="Shop name"

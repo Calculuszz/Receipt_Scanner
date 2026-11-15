@@ -4,22 +4,42 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase-browser";
 import type { Receipt } from "@/lib/types";
-import { ICONS, categoryStyle, money, moneyParts, shortDate, takeFlash, type Flash } from "@/lib/ui";
+import { ICONS, categoryStyle, money, moneyParts, takeFlash, type Flash } from "@/lib/ui";
 import { Icon, RoundButton, Spinner, ThemeToggle, Toast } from "@/components/ui";
 
 type CategoryInfo = { id: string; name: string; color: string | null };
 
 // Tile layouts for 1–5 categories: [grid-area per tile], grid rows.
 const LAYOUTS: Record<number, { areas: string[]; rows: string }> = {
-  1: { areas: ["1 / 1 / 2 / 3"], rows: "96px" },
-  2: { areas: ["1 / 1 / 2 / 2", "1 / 2 / 2 / 3"], rows: "96px" },
-  3: { areas: ["1 / 1 / 3 / 2", "1 / 2 / 2 / 3", "2 / 2 / 3 / 3"], rows: "88px 88px" },
-  4: { areas: ["1 / 1 / 3 / 2", "1 / 2 / 2 / 3", "2 / 2 / 3 / 3", "3 / 1 / 4 / 3"], rows: "88px 88px 58px" },
-  5: { areas: ["1 / 1 / 3 / 2", "1 / 2 / 2 / 3", "2 / 2 / 3 / 3", "3 / 1 / 4 / 2", "3 / 2 / 4 / 3"], rows: "88px 88px 58px" },
+  1: { areas: ["1 / 1 / 2 / 3"], rows: "104px" },
+  2: { areas: ["1 / 1 / 2 / 2", "1 / 2 / 2 / 3"], rows: "104px" },
+  3: { areas: ["1 / 1 / 3 / 2", "1 / 2 / 2 / 3", "2 / 2 / 3 / 3"], rows: "92px 92px" },
+  4: { areas: ["1 / 1 / 3 / 2", "1 / 2 / 2 / 3", "2 / 2 / 3 / 3", "3 / 1 / 4 / 3"], rows: "92px 92px 58px" },
+  5: { areas: ["1 / 1 / 3 / 2", "1 / 2 / 2 / 3", "2 / 2 / 3 / 3", "3 / 1 / 4 / 2", "3 / 2 / 4 / 3"], rows: "92px 92px 58px" },
 };
 
-function monthKey(r: Receipt) {
+/** "YYYY-MM" the receipt belongs to (receipt date, else the day it was saved). */
+function monthOf(r: Receipt) {
   return (r.receipt_date ?? r.created_at.slice(0, 10)).slice(0, 7);
+}
+function dayOf(r: Receipt) {
+  return r.receipt_date ?? r.created_at.slice(0, 10);
+}
+function ymOf(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function shiftYm(ym: string, by: number) {
+  const [y, m] = ym.split("-").map(Number);
+  return ymOf(new Date(y, m - 1 + by, 1));
+}
+function ymLabel(ym: string, opts: Intl.DateTimeFormatOptions) {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("en-GB", opts);
+}
+function dayLabel(iso: string, today: string, yesterday: string) {
+  if (iso === today) return "Today";
+  if (iso === yesterday) return "Yesterday";
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
 
 export default function ExpenseList() {
@@ -31,6 +51,10 @@ export default function ExpenseList() {
   const [filter, setFilter] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const [highlight, setHighlight] = useState<string[]>([]);
+  const [now] = useState(() => new Date());
+  const thisMonth = ymOf(now);
+  const [month, setMonth] = useState(thisMonth);
+  const [dir, setDir] = useState<"left" | "right" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -43,7 +67,7 @@ export default function ExpenseList() {
         supabase.from("categories").select("id, name, color"),
       ]);
       if (r.error) {
-        setError("We couldn't load your receipts. Pull to refresh or try again in a moment.");
+        setError("We couldn't load your receipts. Try again in a moment.");
         return;
       }
       setError("");
@@ -65,15 +89,22 @@ export default function ExpenseList() {
     load();
   }, [load]);
 
-  const now = new Date();
-  const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const monthLabel = now.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  const earliest = useMemo(
+    () => receipts.reduce((min, r) => (monthOf(r) < min ? monthOf(r) : min), thisMonth),
+    [receipts, thisMonth],
+  );
+  const latestWithData = useMemo(
+    () => receipts.map(monthOf).filter((m) => m <= thisMonth).sort().pop() ?? null,
+    [receipts, thisMonth],
+  );
 
   const view = useMemo(() => {
-    const month = receipts.filter((r) => monthKey(r) === thisMonth);
-    const total = month.reduce((s, r) => s + Number(r.total), 0);
+    const inMonth = receipts.filter((r) => monthOf(r) === month);
+    const total = inMonth.reduce((s, r) => s + Number(r.total), 0);
+    const prevTotal = receipts.filter((r) => monthOf(r) === shiftYm(month, -1)).reduce((s, r) => s + Number(r.total), 0);
+
     const sums = new Map<string, number>();
-    month.forEach((r) => {
+    inMonth.forEach((r) => {
       const key = r.category_id ?? "none";
       sums.set(key, (sums.get(key) ?? 0) + Number(r.total));
     });
@@ -82,16 +113,32 @@ export default function ExpenseList() {
     const tiles = ranked.map(([key, sum], i) => {
       const cat = key === "none" ? undefined : categories[key];
       const style = categoryStyle(cat?.name, cat?.color);
-      const pct = total > 0 ? Math.round((sum / total) * 100) : 0;
       return {
-        key, pct, color: style.color, label: style.short, fullName: cat?.name ?? "No category",
-        area: layout.areas[i], small: ranked.length >= 4 && i >= 3, big: i === 0 && ranked.length >= 3,
+        key, style, pct: total > 0 ? Math.round((sum / total) * 100) : 0, sum,
+        fullName: cat?.name ?? "No category", area: layout.areas[i],
+        small: ranked.length >= 4 && i >= 3, big: i === 0 && ranked.length >= 3,
       };
     });
-    const list = filter ? receipts.filter((r) => (r.category_id ?? "none") === filter) : receipts;
-    const allTotal = receipts.reduce((s, r) => s + Number(r.total), 0);
-    return { month, total, allTotal, tiles, rows: layout?.rows, list };
-  }, [receipts, categories, filter, thisMonth]);
+
+    // Rows for the list, grouped by day
+    const shown = filter ? inMonth.filter((r) => (r.category_id ?? "none") === filter) : inMonth;
+    const groups: { day: string; items: Receipt[] }[] = [];
+    shown.forEach((r) => {
+      const d = dayOf(r);
+      const last = groups[groups.length - 1];
+      if (last && last.day === d) last.items.push(r);
+      else groups.push({ day: d, items: [r] });
+    });
+    return { inMonth, total, prevTotal, tiles, rows: layout?.rows, groups };
+  }, [receipts, categories, filter, month]);
+
+  function goMonth(by: number) {
+    const next = shiftYm(month, by);
+    if (next > thisMonth || next < earliest) return;
+    setDir(by > 0 ? "right" : "left");
+    setFilter(null);
+    setMonth(next);
+  }
 
   async function logout() {
     await supabase.auth.signOut();
@@ -106,11 +153,20 @@ export default function ExpenseList() {
       return;
     }
     setHighlight([row.id]);
+    setMonth(monthOf(row));
     await load();
   }
 
+  const isThisMonth = month === thisMonth;
+  const monthLong = ymLabel(month, { month: "long" });
   const [main, dec] = moneyParts(view.total);
+  const diff = view.total - view.prevTotal;
+  const prevShort = ymLabel(shiftYm(month, -1), { month: "short" });
   const filterName = filter ? (filter === "none" ? "No category" : categories[filter]?.name ?? "Category") : null;
+  const todayIso = `${thisMonth}-${String(now.getDate()).padStart(2, "0")}`;
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  const yesterdayIso = `${ymOf(y)}-${String(y.getDate()).padStart(2, "0")}`;
+  const slide = dir === "right" ? "anim-from-right" : dir === "left" ? "anim-from-left" : "anim-fade";
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -124,17 +180,32 @@ export default function ExpenseList() {
         />
       )}
 
-      <div className="flex flex-1 flex-col gap-6 px-5 pb-36 pt-[max(28px,env(safe-area-inset-top))]">
+      <div className="flex flex-1 flex-col gap-6 px-5 pb-36 pt-[max(24px,env(safe-area-inset-top))]">
         <header className="flex items-center justify-between">
-          <div>
-            <p className="text-[13px] font-medium text-muted">{monthLabel}</p>
-            <h1 className="mt-0.5 text-[30px] font-semibold tracking-[-0.03em]">Expenses</h1>
-          </div>
+          <h1 className="text-[30px] font-semibold tracking-[-0.03em]">Expenses</h1>
           <div className="flex gap-2">
             <ThemeToggle />
             <RoundButton icon={ICONS.logout} aria-label="Log out" onClick={logout} />
           </div>
         </header>
+
+        {/* Month picker */}
+        <nav aria-label="Choose month" className="-mt-2 flex items-center justify-between rounded-full bg-surface p-1">
+          <button type="button" onClick={() => goMonth(-1)} disabled={month <= earliest}
+            aria-label={`Previous month, ${ymLabel(shiftYm(month, -1), { month: "long", year: "numeric" })}`}
+            className="tap flex h-10 w-10 items-center justify-center rounded-full disabled:opacity-25">
+            <Icon d={ICONS.back} size={18} stroke={2.2} />
+          </button>
+          <p aria-live="polite" className="text-[15px] font-semibold">
+            {ymLabel(month, { month: "long", year: "numeric" })}
+            {isThisMonth && <span className="ml-2 rounded-full bg-brand px-2 py-0.5 align-[2px] text-[11px] font-semibold text-ink">Now</span>}
+          </p>
+          <button type="button" onClick={() => goMonth(1)} disabled={isThisMonth}
+            aria-label={`Next month, ${ymLabel(shiftYm(month, 1), { month: "long", year: "numeric" })}`}
+            className="tap flex h-10 w-10 items-center justify-center rounded-full disabled:opacity-25">
+            <Icon d={ICONS.chevron} size={18} stroke={2.2} />
+          </button>
+        </nav>
 
         {loading ? (
           <div className="flex flex-1 items-center justify-center py-24 text-muted" role="status">
@@ -147,87 +218,112 @@ export default function ExpenseList() {
               className="tap mt-4 h-11 rounded-full bg-surface2 px-4 text-[15px] font-medium">Try again</button>
           </div>
         ) : (
-          <>
-            <section aria-label="Spending this month" className="anim-fade">
-              <p className="text-sm text-muted">Spent this month</p>
-              <p className="mt-1.5 text-[52px] font-semibold leading-none tracking-[-0.045em] tabular-nums">
-                <span className="mr-0.5 align-[16px] text-[28px] font-medium">฿</span>{main}
-                <span className="text-[26px] text-muted">{dec}</span>
+          <div key={month} className={`flex flex-col gap-6 ${slide}`}>
+            <section aria-label={`Spending in ${monthLong}`}>
+              <p className="text-sm text-muted">{isThisMonth ? "Spent this month" : `Spent in ${monthLong}`}</p>
+              <p className="mt-1.5 text-[56px] font-semibold leading-none tracking-[-0.05em] tabular-nums">
+                <span className="mr-0.5 align-[18px] text-[28px] font-medium tracking-normal">฿</span>{main}
+                <span className="text-[26px] tracking-normal text-muted">{dec}</span>
               </p>
-              <p className="mt-2.5 text-sm text-muted">
-                {view.month.length} receipt{view.month.length === 1 ? "" : "s"} this month
-                {receipts.length > view.month.length && ` · ฿${money(view.allTotal)} in total`}
-              </p>
-            </section>
-
-            {view.tiles.length > 0 && (
-              <div className="grid grid-cols-[1.2fr_1fr] gap-2" style={{ gridTemplateRows: view.rows }}>
-                {view.tiles.map((t, i) => (
-                  <button
-                    key={t.key}
-                    type="button"
-                    onClick={() => setFilter(filter === t.key ? null : t.key)}
-                    aria-pressed={filter === t.key}
-                    aria-label={`${t.fullName}, ${t.pct} percent of this month. ${filter === t.key ? "Show all receipts" : "Show only this category"}`}
-                    className={`tap anim-rise flex rounded-[22px] px-3.5 py-3 text-left text-ink ${t.small ? "flex-row items-center justify-between" : "flex-col items-start justify-between"}`}
-                    style={{ gridArea: t.area, background: t.color, opacity: filter && filter !== t.key ? 0.32 : 1, animationDelay: `${i * 50}ms` }}
-                  >
-                    <span className={`font-semibold leading-none tracking-[-0.04em] tabular-nums ${t.big ? "text-[46px]" : t.small ? "text-lg" : "text-[28px]"}`}>{t.pct}%</span>
-                    <span className="text-[13px] font-medium">{t.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <section className="relative pt-5" aria-labelledby="list-title">
-              <div aria-hidden="true" className="absolute inset-x-7 top-0 h-20 rounded-[22px] bg-[#FFB34F]" />
-              <div aria-hidden="true" className="absolute inset-x-3.5 top-[7px] h-20 rounded-[22px] bg-[#C38BFA]" />
-              <div aria-hidden="true" className="absolute inset-x-0 top-3.5 h-20 rounded-[22px] bg-[#0EB6F2]" />
-              <div className="relative rounded-3xl bg-surface px-1.5 pb-1.5 pt-2">
-                <div className="flex min-h-8 items-center justify-between px-3 pb-1.5 pt-2.5">
-                  <h2 id="list-title" className="text-[17px] font-semibold tracking-[-0.01em]">{filterName ?? "Recent"}</h2>
-                  {filter && (
-                    <button type="button" onClick={() => setFilter(null)}
-                      className="tap flex h-8 items-center gap-1.5 rounded-2xl bg-surface2 px-3 text-[13px] font-medium">
-                      Show all <Icon d={ICONS.close} size={14} stroke={2} />
-                    </button>
-                  )}
-                </div>
-
-                {receipts.length === 0 ? (
-                  <div className="px-3 pb-6 pt-2">
-                    <p className="text-[15px] font-medium">Scan your first receipt</p>
-                    <p className="mt-1 text-sm text-muted">Take a photo and we&apos;ll fill in the shop, date and total for you.</p>
-                  </div>
-                ) : (
-                  <ul>
-                    {view.list.map((r, i) => {
-                      const cat = r.category_id ? categories[r.category_id] : undefined;
-                      const style = categoryStyle(cat?.name, cat?.color);
-                      return (
-                        <li key={r.id}>
-                          <Link
-                            href={`/receipts/${r.id}`}
-                            className={`tap press anim-rise flex items-center gap-3 rounded-[18px] p-2.5 ${highlight.includes(r.id) ? "anim-flash" : ""}`}
-                            style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
-                          >
-                            <span className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-full text-ink" style={{ background: style.color }}>
-                              <Icon d={style.icon} />
-                            </span>
-                            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                              <span className="truncate text-[15px] font-medium">{r.shop_name || "Unknown shop"}</span>
-                              <span className="text-[13px] text-muted">{shortDate(r.receipt_date)} · {cat?.name ?? "No category"}</span>
-                            </span>
-                            <span className="shrink-0 text-[15px] font-semibold tabular-nums">฿{money(Number(r.total))}</span>
-                          </Link>
-                        </li>
-                      );
-                    })}
-                  </ul>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-[13px]">
+                <span className="rounded-full bg-surface px-2.5 py-1 font-medium">
+                  {view.inMonth.length} receipt{view.inMonth.length === 1 ? "" : "s"}
+                </span>
+                {view.prevTotal > 0 && view.total > 0 && Math.abs(diff) >= 0.01 && (
+                  <span className="rounded-full bg-surface px-2.5 py-1 text-muted">
+                    <span className={diff > 0 ? "text-danger" : "text-ok"}>{diff > 0 ? "↑" : "↓"} ฿{money(Math.abs(diff))}</span> vs {prevShort}
+                  </span>
                 )}
               </div>
             </section>
-          </>
+
+            {view.inMonth.length === 0 ? (
+              <section className="rounded-3xl bg-surface p-5">
+                <div aria-hidden="true" className="mb-4 flex gap-1.5">
+                  <span className="h-9 w-9 rounded-xl bg-[#22D27F]" />
+                  <span className="h-9 w-9 rounded-xl bg-[#0EB6F2]" />
+                  <span className="h-9 w-9 rounded-xl bg-[#FFB34F]" />
+                </div>
+                <p className="text-[17px] font-semibold">No receipts in {monthLong}{isThisMonth ? " yet" : ""}</p>
+                <p className="mt-1 text-[15px] leading-snug text-muted">
+                  {isThisMonth ? "Scan a receipt and it shows up here with its category." : "Nothing was saved for this month."}
+                </p>
+                {latestWithData && latestWithData !== month && (
+                  <button type="button" onClick={() => { setDir(latestWithData > month ? "right" : "left"); setMonth(latestWithData); }}
+                    className="tap mt-4 flex h-11 items-center gap-1.5 rounded-full bg-surface2 px-4 text-[15px] font-medium">
+                    Show {ymLabel(latestWithData, { month: "long" })} <Icon d={ICONS.chevron} size={16} stroke={2.2} />
+                  </button>
+                )}
+              </section>
+            ) : (
+              <>
+                <div className="grid grid-cols-[1.2fr_1fr] gap-2" style={{ gridTemplateRows: view.rows }}>
+                  {view.tiles.map((t, i) => (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => setFilter(filter === t.key ? null : t.key)}
+                      aria-pressed={filter === t.key}
+                      aria-label={`${t.fullName}, ${t.pct} percent, ฿${money(t.sum)}. ${filter === t.key ? "Show all receipts" : "Show only this category"}`}
+                      className={`tap anim-rise relative flex overflow-hidden rounded-[22px] px-3.5 py-3 text-left text-ink ${t.small ? "flex-row items-center justify-between" : "flex-col items-start justify-between"}`}
+                      style={{ gridArea: t.area, background: t.style.color, opacity: filter && filter !== t.key ? 0.3 : 1, animationDelay: `${i * 50}ms` }}
+                    >
+                      {!t.small && <Icon d={t.style.icon} size={18} className="absolute right-3 top-3 opacity-55" />}
+                      <span className={`font-semibold leading-none tracking-[-0.04em] tabular-nums ${t.big ? "text-[48px]" : t.small ? "text-lg" : "text-[30px]"}`}>{t.pct}%</span>
+                      <span className="text-[13px] font-medium">{t.style.short}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <section className="relative pt-5" aria-labelledby="list-title">
+                  <div aria-hidden="true" className="absolute inset-x-7 top-0 h-20 rounded-[22px] bg-[#FFB34F]" />
+                  <div aria-hidden="true" className="absolute inset-x-3.5 top-[7px] h-20 rounded-[22px] bg-[#C38BFA]" />
+                  <div aria-hidden="true" className="absolute inset-x-0 top-3.5 h-20 rounded-[22px] bg-[#0EB6F2]" />
+                  <div className="relative rounded-3xl bg-surface px-1.5 pb-1.5 pt-2">
+                    <div className="flex min-h-8 items-center justify-between px-3 pb-1 pt-2.5">
+                      <h2 id="list-title" className="text-[17px] font-semibold tracking-[-0.01em]">{filterName ?? "Receipts"}</h2>
+                      {filter && (
+                        <button type="button" onClick={() => setFilter(null)}
+                          className="tap flex h-8 items-center gap-1.5 rounded-2xl bg-surface2 px-3 text-[13px] font-medium">
+                          Show all <Icon d={ICONS.close} size={14} stroke={2} />
+                        </button>
+                      )}
+                    </div>
+
+                    {view.groups.map((g, gi) => (
+                      <div key={g.day}>
+                        <p className="px-3 pb-1 pt-3 text-xs font-medium text-muted">{dayLabel(g.day, todayIso, yesterdayIso)}</p>
+                        <ul>
+                          {g.items.map((r, i) => {
+                            const cat = r.category_id ? categories[r.category_id] : undefined;
+                            const style = categoryStyle(cat?.name, cat?.color);
+                            return (
+                              <li key={r.id}>
+                                <Link
+                                  href={`/receipts/${r.id}`}
+                                  className={`tap press anim-rise flex items-center gap-3 rounded-[18px] p-2.5 ${highlight.includes(r.id) ? "anim-flash" : ""}`}
+                                  style={{ animationDelay: `${Math.min(gi * 2 + i, 8) * 40}ms` }}
+                                >
+                                  <span className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[14px] text-ink" style={{ background: style.color }}>
+                                    <Icon d={style.icon} />
+                                  </span>
+                                  <span className="flex min-w-0 flex-1 flex-col">
+                                    <span className="truncate text-[15px] font-medium leading-snug">{r.shop_name || "Unknown shop"}</span>
+                                    <span className="text-[13px] leading-snug text-muted">{cat?.name ?? "No category"}</span>
+                                  </span>
+                                  <span className="shrink-0 text-[15px] font-semibold tabular-nums">฿{money(Number(r.total))}</span>
+                                </Link>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </>
+            )}
+          </div>
         )}
       </div>
 

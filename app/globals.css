@@ -48,16 +48,41 @@
   --color-ok: var(--ok);
   --color-brand: #22d27f;
   --color-ink: #0e0e0f;
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-geist-sans), var(--font-thai), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono);
 }
 
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-geist-sans), var(--font-thai), ui-sans-serif, system-ui, -apple-system, sans-serif;
   -webkit-tap-highlight-color: transparent;
 }
+
+/* ---------- Inputs: no browser boxes ---------- */
+input, select, textarea { font: inherit; color: inherit; background-color: transparent; }
+/* Chrome/Safari paint a blue-grey box over autofilled fields; blend it into the card instead */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  caret-color: var(--text);
+  box-shadow: 0 0 0 1000px var(--surface) inset;
+  transition: background-color 9999s ease-out 0s;
+}
+/* No spinner arrows on number fields */
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+/* Date field: no grey inner box; keep the native picker */
+input[type="date"]::-webkit-datetime-edit { padding: 0; }
+input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.55; cursor: pointer; }
+/* Fields inside cards show focus with the caret + card ring, not a box around the text */
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; }
+.field-card:focus-within { box-shadow: 0 0 0 2px rgba(14, 182, 242, 0.55); }
+
+/* Thai needs a little more line height than Latin */
+:lang(th), .thai { line-height: 1.6; }
 
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
@@ -83,6 +108,10 @@ button:disabled { cursor: not-allowed; }
 .anim-dim { animation: rs-dim 0.3s ease-out both; }
 .anim-toast { animation: rs-toast 0.5s cubic-bezier(0.32, 0.72, 0, 1) both; }
 .anim-flash { animation: rs-flash 1.6s ease-out both; }
+.anim-from-right { animation: rs-from-right 0.42s cubic-bezier(0.32, 0.72, 0, 1) both; }
+.anim-from-left { animation: rs-from-left 0.42s cubic-bezier(0.32, 0.72, 0, 1) both; }
+@keyframes rs-from-right { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes rs-from-left { from { transform: translateX(-28px); opacity: 0; } to { transform: none; opacity: 1; } }
 
 @keyframes rs-push { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes rs-up { from { transform: translateY(100%); } to { transform: none; } }

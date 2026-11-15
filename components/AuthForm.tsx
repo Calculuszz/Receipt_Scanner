@@ -153,15 +153,28 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
         </div>
       )}
       <form onSubmit={handleSubmit} noValidate
-        className={`anim-fade flex flex-1 flex-col px-6 pb-9 ${mode === "login" ? "pt-24" : "pt-6"}`}>
+        className={`anim-fade flex flex-1 flex-col px-6 pb-9 ${mode === "login" ? "pt-[max(40px,env(safe-area-inset-top))]" : "pt-6"}`}>
         {mode === "login" && (
-          <div aria-hidden="true" className="grid h-[76px] w-[76px] grid-cols-[1.2fr_1fr] grid-rows-2 gap-1">
-            <span className="anim-rise row-span-2 rounded-[14px] bg-[#22D27F]" />
-            <span className="anim-rise rounded-xl bg-[#0EB6F2] [animation-delay:60ms]" />
-            <span className="anim-rise rounded-xl bg-[#FFB34F] [animation-delay:120ms]" />
+          <div aria-hidden="true" className="grid h-[184px] grid-cols-[1.25fr_1fr] grid-rows-[1fr_1fr_44px] gap-2 text-ink">
+            <span className="anim-rise relative row-span-2 flex flex-col justify-end rounded-[26px] bg-[#22D27F] p-4">
+              <Icon d={ICONS.food} size={22} className="absolute right-4 top-4 opacity-60" />
+              <span className="text-[13px] font-medium">Food &amp; Drinks</span>
+            </span>
+            <span className="anim-rise relative flex flex-col justify-end rounded-[22px] bg-[#0EB6F2] px-3.5 py-3 [animation-delay:70ms]">
+              <Icon d={ICONS.transport} size={18} className="absolute right-3 top-3 opacity-60" />
+              <span className="text-[13px] font-medium">Transport</span>
+            </span>
+            <span className="anim-rise relative flex flex-col justify-end rounded-[22px] bg-[#FFB34F] px-3.5 py-3 [animation-delay:140ms]">
+              <Icon d={ICONS.printing} size={18} className="absolute right-3 top-3 opacity-60" />
+              <span className="text-[13px] font-medium">Printing</span>
+            </span>
+            <span className="anim-rise col-span-2 flex items-center justify-between rounded-[18px] bg-[#C38BFA] px-4 [animation-delay:210ms]">
+              <span className="text-[13px] font-medium">Equipment</span>
+              <Icon d={ICONS.equipment} size={18} className="opacity-60" />
+            </span>
           </div>
         )}
-        <h1 className={`${mode === "login" ? "mt-8 text-[32px]" : "text-[30px]"} font-semibold tracking-[-0.035em]`}>
+        <h1 className={`${mode === "login" ? "mt-9 text-[34px]" : "text-[30px]"} font-semibold tracking-[-0.035em]`}>
           {mode === "login" ? "Receipt Scanner" : "Create your account"}
         </h1>
         <p className="mt-2 text-base leading-relaxed text-muted">
@@ -170,7 +183,7 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
             : "Use your university email so the club can find your receipts."}
         </p>
 
-        <div className="mt-8 rounded-[20px] bg-surface px-4">
+        <div className="field-card mt-8 rounded-[20px] bg-surface px-4 transition-shadow">
           {mode === "signup" && (
             <Field label="Name">
               <input autoComplete="name" value={name} onChange={(e) => { setName(e.target.value); setError(""); }}
