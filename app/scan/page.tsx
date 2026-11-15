@@ -1,330 +1,359 @@
 "use client";
-import { createClient } from "@/lib/supabase/client";
-import Link from "next/link";
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
-async function resizePhoto(file: File): Promise<Blob> {
-  let bitmap: ImageBitmap;
-  try { bitmap = await createImageBitmap(file); }
-  catch { throw new Error("Cannot open this image. Try a JPEG or PNG photo."); }
-  try {
-    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Could not prepare the image.");
-    context.fillStyle = "#fff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
-    if (!blob || blob.type !== "image/jpeg" || blob.size > 5 * 1024 * 1024) throw new Error("Could not compress the photo below 5 MB.");
-    return blob;
-  } finally { bitmap.close(); }
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
+import { normalizeDocument, scanWarning, type ScannedReceipt } from "@/lib/receipt-validation";
+import { buildReceiptBatch, saveReceiptBatch, type ReceiptBatch, type ReceiptDraft } from "@/lib/receipt-batch";
+import { prepareReceiptFile } from "@/lib/receipt-file";
+
+type Phase = "idle" | "preparing" | "uploading" | "scanning" | "reviewing" | "saving" | "cancelling";
+type Category = { id: string; name: string; user_id: string | null };
+type Source = { userId: string; path: string };
+const labels: Partial<Record<Phase, string>> = {
+  preparing: "Preparing your file…", uploading: "Uploading your file…", scanning: "Reading receipts…",
+  saving: "Saving all receipts…", cancelling: "Removing unsaved file…",
+};
+const control = "mt-1 block w-full rounded border border-gray-400 bg-transparent p-2";
+const button = "rounded border border-gray-400 px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50";
+
+function toDraft(receipt?: ScannedReceipt, categories: Category[] = []): ReceiptDraft {
+  const category = categories.find((item) => item.name === receipt?.category && item.user_id === null)
+    ?? categories.find((item) => item.name === receipt?.category);
+  return {
+    id: crypto.randomUUID(), shopName: receipt?.shop_name ?? "", date: receipt?.receipt_date ?? "",
+    total: receipt?.total?.toString() ?? "", currency: receipt?.currency ?? null, confirmedThb: false,
+    categoryId: category?.id ?? "", note: "", sourcePages: receipt?.source_pages ?? [], confidence: receipt?.confidence ?? null,
+  };
 }
 
-async function checkSession() {
-  const supabase = createClient();
-
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-
-  if (error || !user) {
-    console.log("ยังไม่ได้เข้าสู่ระบบ");
-    return;
-  }
-
-  console.log("เข้าสู่ระบบแล้ว User ID:", user.id);
+function PdfReceiptPreview({ url, sourcePages, index }: { url: string; sourcePages: number[]; index: number }) {
+  const [page, setPage] = useState(sourcePages[0]?.toString() ?? "");
+  const pageNumber = Number(page);
+  const validPage = Number.isSafeInteger(pageNumber) && pageNumber > 0;
+  const pageUrl = validPage ? `${url}#page=${pageNumber}` : url;
+  return (
+    <div className="space-y-2 rounded border border-gray-400 p-3">
+      <p className="font-medium">Original PDF — receipt {index + 1}</p>
+      <p className="text-sm">{sourcePages.length ? `AI suggested page(s): ${sourcePages.join(", ")}. Verify the page against the original.` : "AI did not identify a page. Enter a page number or browse the document."}</p>
+      <label className="block text-sm">Page to display
+        <input type="number" min="1" step="1" inputMode="numeric" value={page} onChange={(event) => setPage(event.target.value)} placeholder="Full document" className={control} />
+      </label>
+      <iframe key={pageUrl} src={pageUrl} title={`PDF preview for receipt ${index + 1}`} className="h-80 w-full rounded border border-gray-400 bg-white lg:h-[36rem]" />
+      <a href={pageUrl} target="_blank" rel="noopener noreferrer" className="inline-block text-sm underline">Open PDF{validPage ? ` at page ${pageNumber}` : ""} in a new tab</a>
+      <p className="text-xs">Some browsers may ignore the page number or not show an embedded PDF. Use the link above if needed.</p>
+    </div>
+  );
 }
 
 export default function ScanPage() {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
+  const picker = useRef<HTMLInputElement>(null);
+  const video = useRef<HTMLVideoElement>(null);
+  const cameraStream = useRef<MediaStream | null>(null);
+  const cameraRequest = useRef(0);
+  const [cameraOpen, setCameraOpen] = useState(true);
+  const [cameraStarting, setCameraStarting] = useState(true);
+  const lock = useRef(false);
+  const source = useRef<Source | null>(null);
+  const pending = useRef<{ userId: string; rows: ReceiptBatch } | null>(null);
+  const [phase, setPhase] = useState<Phase>("idle");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<ReceiptDraft[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [error, setError] = useState("");
-  const [scanned, setScanned] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [scanResult, setScanResult] = useState<{
-    shop_name: string | null;
-    receipt_date: string | null;
-    total: number | null;
-    category: string | null;
-    confidence: number | null;
-    currency: string | null;
-  } | null>(null);
-  const [message, setMessage] = useState("");
-  const [authMessage, setAuthMessage] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [categories, setCategories] = useState<{ id: string; name: string; user_id: string | null }[]>([]);
-  const [categoryId, setCategoryId] = useState("");
-  const saveLock = useRef(false);
-  const uploadRef = useRef<{ userId: string; path: string } | null>(null);
-  const receiptIdRef = useRef<string | null>(null);
+  const [notice, setNotice] = useState("");
+  const [frozen, setFrozen] = useState(false);
+  const [scanComplete, setScanComplete] = useState(false);
+  const busy = phase !== "idle" && phase !== "reviewing";
 
-  async function discardUnsavedPhoto() {
-    const upload = uploadRef.current;
-    if (!upload || saved) return;
-    const supabase = createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user || user.id !== upload.userId) throw new Error("Log back into the original account to remove the uploaded photo.");
-    const { data: linked, error: checkError } = await supabase.from("receipts").select("id").eq("image_path", upload.path).limit(1);
-    if (checkError) throw new Error("Could not verify whether the photo is saved. Try again later.");
-    if (linked?.length) throw new Error("This photo is linked to a saved receipt and was not removed.");
-    const { error: removeError } = await supabase.storage.from("receipts").remove([upload.path]);
-    if (removeError) throw new Error(`Could not remove uploaded photo: ${removeError.message}`);
-    uploadRef.current = null;
-  }
-
-  async function handleTestLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    const email = String(data.get("email") ?? "").trim();
-    const password = String(data.get("password") ?? "");
-    setAuthLoading(true);
-    setAuthMessage("");
-    try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) {
-        setAuthMessage("Login failed. Check your account and email confirmation.");
-        return;
-      }
-      form.reset();
-      setAuthMessage("Login successful. You can now check your session.");
-    } catch {
-      setAuthMessage("Could not connect to Supabase. Check your configuration and connection.");
-    } finally {
-      setAuthLoading(false);
-    }
-  }
-
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
   useEffect(() => {
-    return () => { if (preview) URL.revokeObjectURL(preview); };
-  }, [preview]);
+    const requestRef = cameraRequest;
+    const streamRef = cameraStream;
+    return () => {
+      requestRef.current++;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, []);
+  useEffect(() => {
+    if (file) return;
+    const request = ++cameraRequest.current;
+    let cancelled = false;
+    let ownedStream: MediaStream | null = null;
+    // The promise callback also runs after the video element has mounted.
+    void Promise.resolve().then(async () => {
+      if (cancelled || request !== cameraRequest.current) return;
+      setCameraOpen(true); setCameraStarting(true);
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera unavailable");
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+        if (cancelled || request !== cameraRequest.current) { stream.getTracks().forEach((track) => track.stop()); return; }
+        ownedStream = stream;
+        cameraStream.current = stream;
+        if (!video.current) throw new Error("Camera preview unavailable");
+        video.current.srcObject = stream;
+        await video.current.play();
+      } catch {
+        if (cancelled || request !== cameraRequest.current) return;
+        cameraStream.current?.getTracks().forEach((track) => track.stop());
+        cameraStream.current = null;
+        setCameraOpen(false);
+        setError("Camera access is unavailable. Allow camera access in your browser, or use Upload file.");
+      } finally {
+        if (!cancelled && request === cameraRequest.current) setCameraStarting(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+      ownedStream?.getTracks().forEach((track) => track.stop());
+    };
+  }, [file]);
 
-  async function handleScan() {
-  if (!file) return;
+  function closeCamera() {
+    cameraRequest.current++;
+    cameraStream.current?.getTracks().forEach((track) => track.stop());
+    cameraStream.current = null;
+    if (video.current) video.current.srcObject = null;
+    setCameraOpen(false); setCameraStarting(false);
+  }
 
-  setMessage("");
-  setError("");
-  setScanned(false);
-  setLoading(true);
+  async function openCamera() {
+    if (busy || frozen || cameraStarting || cameraOpen) return;
+    const request = ++cameraRequest.current;
+    setError(""); setCameraOpen(true); setCameraStarting(true);
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera unavailable");
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      if (request !== cameraRequest.current) { stream.getTracks().forEach((track) => track.stop()); return; }
+      cameraStream.current = stream;
+      if (!video.current) throw new Error("Camera preview unavailable");
+      video.current.srcObject = stream;
+      await video.current.play();
+    } catch {
+      if (request !== cameraRequest.current) return;
+      cameraStream.current?.getTracks().forEach((track) => track.stop());
+      cameraStream.current = null;
+      setCameraOpen(false);
+      setError("Could not open the camera. Allow camera access in your browser, or use Upload file.");
+    } finally { if (request === cameraRequest.current) setCameraStarting(false); }
+  }
 
-  try {
+  async function capturePhoto() {
+    if (busy || cameraStarting || lock.current) return;
+    const element = video.current;
+    if (!element?.videoWidth || !element.videoHeight) { setError("The camera is not ready yet. Please try again."); return; }
+    const request = cameraRequest.current;
+    setCameraStarting(true);
+    try {
+      const canvas = document.createElement("canvas");
+      const scale = Math.min(1, 1600 / Math.max(element.videoWidth, element.videoHeight));
+      canvas.width = Math.round(element.videoWidth * scale); canvas.height = Math.round(element.videoHeight * scale);
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Could not capture photo");
+      context.drawImage(element, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+      if (request !== cameraRequest.current) return;
+      if (!blob) throw new Error("Could not capture photo");
+      closeCamera();
+      await startScan(new File([blob], "receipt-camera.jpg", { type: "image/jpeg" }), true);
+    } catch {
+      setError("Could not take the photo. Please try again or upload a file.");
+    } finally { if (request === cameraRequest.current) setCameraStarting(false); }
+  }
+
+  async function currentUser() {
     const supabase = createClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) throw new Error("Please log in before scanning.");
-    if (uploadRef.current && uploadRef.current.userId !== user.id) throw new Error("Your account changed. Select the photo again.");
-    if (!uploadRef.current) {
-      const compressed = await resizePhoto(file);
-      const path = `${user.id}/${crypto.randomUUID()}.jpg`;
-      const { error: uploadError } = await supabase.storage.from("receipts").upload(path, compressed, { contentType: "image/jpeg" });
-      if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
-      uploadRef.current = { userId: user.id, path };
+    if (authError || !user) {
+      router.replace("/login");
+      throw new Error("Please log in before scanning or saving receipts.");
     }
+    return { supabase, user };
+  }
 
+  async function removeUnsavedSource() {
+    const uploaded = source.current;
+    if (!uploaded) return;
+    const { supabase, user } = await currentUser();
+    if (user.id !== uploaded.userId) throw new Error("Use the original account to remove this file.");
+    const { data: linked, error: lookupError } = await supabase.from("receipts").select("id").eq("image_path", uploaded.path).limit(1);
+    if (lookupError) throw new Error("Could not check whether this file was saved. Please check the save status again.");
+    if (linked?.length) throw new Error("This file is linked to saved receipts. Check the save status before leaving.");
+    const { error: removeError } = await supabase.storage.from("receipts").remove([uploaded.path]);
+    if (removeError) throw new Error(`Could not remove the unsaved file: ${removeError.message}`);
+    source.current = null;
+  }
+
+  async function scan(selected: File) {
+    setPhase("preparing");
+    const prepared = await prepareReceiptFile(selected);
+    const { supabase, user } = await currentUser();
+    if (source.current && source.current.userId !== user.id) throw new Error("Your account changed. Use the original account to cancel this scan.");
+    if (!source.current) {
+      const path = `${user.id}/${crypto.randomUUID()}.${prepared.extension}`;
+      setPhase("uploading");
+      // Track the intended path even when the upload response is lost.
+      source.current = { userId: user.id, path };
+      const { error: uploadError } = await supabase.storage.from("receipts").upload(path, prepared.blob, { contentType: prepared.blob.type });
+      if (uploadError) throw new Error(`Upload failed: ${uploadError.message}${selected.type === "application/pdf" ? " Check that the receipts bucket allows PDF files." : ""}`);
+    }
+    setPhase("scanning");
     const response = await fetch("/api/scan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ imagePath: uploadRef.current.path }),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imagePath: source.current.path }),
     });
-
+    const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      const failure = await response.json().catch(() => null);
-      throw new Error(typeof failure?.error === "string" ? failure.error : "Scan request failed. Please try again.");
+      if (response.status === 401) router.replace("/login");
+      throw new Error(typeof payload?.error === "string" ? payload.error : "Could not scan this file. Please retry.");
     }
+    const result = normalizeDocument(payload);
+    const { data: available, error: categoryError } = await supabase.from("categories").select("id, name, user_id").order("name");
+    const items: Category[] = available ?? [];
+    setCategories(items);
+    setDrafts(result.receipts.map((receipt) => toDraft(receipt, items)));
+    setScanComplete(true);
+    setNotice(categoryError ? "Categories could not be loaded. You can save without one." : "");
+    setPhase("reviewing");
+  }
 
-    const result = await response.json();
-
-    setScanResult(result);
+  async function startScan(selected: File, replace: boolean) {
+    if (lock.current || pending.current) return;
+    lock.current = true; setError(""); setNotice("");
     try {
-      const supabase = createClient();
-      const { data: available, error: categoryError } = await supabase.from("categories").select("id, name, user_id").order("name");
-      if (categoryError) throw categoryError;
-      const items = available ?? [];
-      setCategories(items);
-      const suggested = typeof result.category === "string" ? result.category.trim().toLowerCase() : "";
-      const match = items.find((item) => item.name.toLowerCase() === suggested && item.user_id === null) ?? items.find((item) => item.name.toLowerCase() === suggested);
-      setCategoryId(match?.id ?? "");
-      if (!match && suggested) setMessage("The suggested category was not found. Select a category or leave it blank.");
-    } catch {
-      setCategories([]);
-      setCategoryId("");
-      setMessage("Could not load categories. You can save without one.");
-    }
-    setScanned(true);
-  } catch (err) {
-    const originalMessage = err instanceof Error ? err.message : "Could not scan the receipt. Please try again.";
-    try { await discardUnsavedPhoto(); setError(originalMessage); }
-    catch (cleanupError) { setError(`${originalMessage} ${cleanupError instanceof Error ? cleanupError.message : "Could not remove the uploaded photo."}`); }
-  } finally {
-    setLoading(false);
-  }
-  }
-
-
-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const selected = event.target.files?.[0];
-    if (!selected) return;
-    setLoading(true);
-    try { await discardUnsavedPhoto(); }
-    catch (err) { setError(err instanceof Error ? err.message : "Could not remove the previous photo."); if (inputRef.current) inputRef.current.value = ""; setLoading(false); return; }
-    setLoading(false);
-    setScanned(false);
-    setScanResult(null);
-    setCategories([]);
-    setCategoryId("");
-    setSaved(false);
-    uploadRef.current = null;
-    receiptIdRef.current = null;
-    setMessage("");
-    if (!selected.type.startsWith("image/")) {
-      setError("Please choose an image file.");
-      setFile(null);
-      setPreview(null);
-      return;
-    }
-    setError("");
-    setPreview(URL.createObjectURL(selected));
-    setFile(selected);
-  }
-
-  async function clearPhoto() {
-    setLoading(true);
-    try { await discardUnsavedPhoto(); }
-    catch (err) { setError(err instanceof Error ? err.message : "Could not remove the uploaded photo."); setLoading(false); return; }
-    setLoading(false);
-    setFile(null);
-    setPreview(null);
-    setError("");
-    setScanned(false);
-    setScanResult(null);
-    setCategories([]);
-    setCategoryId("");
-    setSaved(false);
-    uploadRef.current = null;
-    receiptIdRef.current = null;
-    setMessage("");
-    if (inputRef.current) inputRef.current.value = "";
-  }
-
-  async function handleReview(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (saveLock.current || saved || !file) return;
-    const data = new FormData(event.currentTarget);
-    const shopName = String(data.get("shopName") ?? "").trim();
-    const total = Number(data.get("total"));
-    const date = String(data.get("receiptDate") ?? "");
-    const selectedCategoryId = String(data.get("category") ?? "");
-    const note = String(data.get("note") ?? "").trim();
-    if (scanResult?.currency !== "THB" && data.get("confirmThb") !== "on") {
-      setMessage("Please confirm from the original receipt that the amount is in THB.");
-      return;
-    }
-    if (!Number.isFinite(total) || total <= 0 || total > 99999999.99) {
-      setMessage("Enter a total greater than zero and no more than 99,999,999.99 THB.");
-      return;
-    }
-    saveLock.current = true;
-    setSaving(true);
-    setMessage("");
-    try {
-      const supabase = createClient();
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError || !user) throw new Error("Please log in before saving.");
-      if (selectedCategoryId && !categories.some((category) => category.id === selectedCategoryId)) throw new Error("Please select a valid category.");
-      if (uploadRef.current && uploadRef.current.userId !== user.id) throw new Error("Your account changed. Select the photo again before saving.");
-      if (!uploadRef.current) throw new Error("Please scan the photo again before saving.");
-      const receiptId = receiptIdRef.current ?? crypto.randomUUID();
-      receiptIdRef.current = receiptId;
-      const { error: insertError } = await supabase.from("receipts").insert({
-        id: receiptId, user_id: user.id, shop_name: shopName || null, receipt_date: date || null,
-        total, currency: "THB", category_id: selectedCategoryId || null, image_path: uploadRef.current.path,
-        note: note || null,
-        ai_confidence: typeof scanResult?.confidence === "number" && Number.isFinite(scanResult.confidence) && scanResult.confidence >= 0 && scanResult.confidence <= 1 ? scanResult.confidence : null,
-      });
-      if (insertError) {
-        const { data: existing, error: checkError } = await supabase.from("receipts").select("id").eq("id", receiptId).maybeSingle();
-        if (checkError) throw new Error("Could not confirm whether the receipt was saved. Check the receipts table before retrying.");
-        if (!existing) throw new Error(`Save failed: ${insertError.message}`);
+      if (replace) {
+        setPhase("cancelling");
+        await removeUnsavedSource();
+        setFile(selected); setPreview(URL.createObjectURL(selected));
+        setDrafts([]); setScanComplete(false); setFrozen(false);
       }
-      setSaved(true);
-      setMessage("Receipt saved successfully to Supabase.");
+      await scan(selected);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not save. Check the receipts table before retrying.");
-    } finally {
-      saveLock.current = false;
-      setSaving(false);
-    }
+      let message = err instanceof Error ? err.message : "Could not scan this file.";
+      try { await removeUnsavedSource(); }
+      catch (cleanupError) { message += ` ${cleanupError instanceof Error ? cleanupError.message : "Cleanup failed. Retry Cancel."}`; }
+      setScanComplete(false); setDrafts([]); setError(message); setPhase("idle");
+    } finally { lock.current = false; }
+  }
+
+  function selectFile(event: ChangeEvent<HTMLInputElement>) {
+    const selected = event.target.files?.[0];
+    event.target.value = "";
+    if (selected) { closeCamera(); void startScan(selected, true); }
+  }
+
+  async function cancel() {
+    if (lock.current) return;
+    lock.current = true; setPhase("cancelling"); setError("");
+    try {
+      await removeUnsavedSource();
+      pending.current = null;
+      setFrozen(false); setFile(null); setPreview(null); setDrafts([]); setScanComplete(false); setNotice("");
+      setPhase("idle");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not cancel. Try again.");
+      setPhase(scanComplete ? "reviewing" : "idle");
+    } finally { lock.current = false; }
+  }
+
+  function update(id: string, changes: Partial<ReceiptDraft>) {
+    setDrafts((items) => items.map((item) => item.id === id ? { ...item, ...changes } : item));
+    setError("");
+  }
+
+  async function saveAll(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (lock.current) return;
+    lock.current = true; setPhase("saving"); setError("");
+    try {
+      const { supabase, user } = await currentUser();
+      if (!source.current || source.current.userId !== user.id) throw new Error("Use the account that scanned this file.");
+      if (pending.current && pending.current.userId !== user.id) throw new Error("Sign in to the original account to check this batch.");
+      if (!pending.current) {
+        const rows = buildReceiptBatch(drafts, user.id, source.current.path);
+        if (rows.some((row) => row.category_id && !categories.some((category) => category.id === row.category_id))) throw new Error("Please select a valid category.");
+        pending.current = { userId: user.id, rows }; setFrozen(true);
+      }
+      await saveReceiptBatch(pending.current.rows, {
+        find: async (ids) => {
+          const found: string[] = [];
+          for (let offset = 0; offset < ids.length; offset += 100) {
+            const { data, error: queryError } = await supabase.from("receipts").select("id").eq("user_id", user.id).in("id", ids.slice(offset, offset + 100));
+            if (queryError) throw new Error("Could not confirm save status. Retry to check the same batch.");
+            found.push(...(data ?? []).map((row) => row.id));
+          }
+          return found;
+        },
+        insert: async (rows) => {
+          const { error: insertError } = await supabase.from("receipts").insert(rows);
+          if (insertError) throw new Error(`Save failed: ${insertError.message}`);
+        },
+      });
+      source.current = null;
+      setNotice("All receipts saved. Opening home…");
+      router.replace("/"); router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save was not confirmed. Retry to check the same batch.");
+      setPhase("reviewing");
+    } finally { lock.current = false; }
   }
 
   return (
-    <main className="mx-auto w-full max-w-2xl space-y-8 p-6">
-      <header>
-        <Link href="/" className="mb-3 inline-block text-sm opacity-70 hover:opacity-100">
-          ← Back to expenses
-        </Link>
-        <h1 className="text-2xl font-semibold">Scan receipt</h1>
-        <p className="mt-2">Upload a receipt photo, then review its details.</p>
-      </header>
-
-      {/* Temporary test login; remove when the team's login page is ready. */}
-      <section className="space-y-3 rounded border border-gray-400 p-4" aria-labelledby="test-login-heading">
-        <h2 id="test-login-heading" className="text-lg font-medium">Temporary test login</h2>
-        <form onSubmit={handleTestLogin} className="space-y-3">
-          <label className="block">Email<input name="email" type="email" autoComplete="username" required className="mt-1 block w-full rounded border border-gray-400 p-2" /></label>
-          <label className="block">Password<input name="password" type="password" autoComplete="current-password" required className="mt-1 block w-full rounded border border-gray-400 p-2" /></label>
-          <button type="submit" disabled={authLoading || saving || loading} className="rounded border border-gray-400 px-4 py-2 disabled:opacity-50">{authLoading ? "Logging in..." : "Log in"}</button>
-        </form>
-        {authMessage && <p role="status">{authMessage}</p>}
-        <button type="button" onClick={checkSession} className="rounded border border-gray-400 px-4 py-2">Check Supabase session (browser console)</button>
-      </section>
-
-      <section className="space-y-4 rounded border border-gray-400 p-4" aria-labelledby="upload-heading">
-        <h2 id="upload-heading" className="text-lg font-medium">1. Upload a photo</h2>
-        <label htmlFor="receipt-photo" className="block font-medium">Receipt photo</label>
-        <input ref={inputRef} id="receipt-photo" type="file" accept="image/*" disabled={loading || saving}
-          onChange={handleFileChange} aria-describedby={error ? "photo-error" : undefined}
-          className="block w-full" />
-        {error && <p id="photo-error" role="alert" className="text-red-600">{error}</p>}
-        {file && preview && (
-          <div>
-            <p className="break-all text-sm">{file.name}</p>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={preview} alt="Selected receipt preview" className="mt-3 max-h-96 max-w-full object-contain" />
-            <button type="button" disabled={loading || saving} onClick={clearPhoto} className="mt-3 rounded border border-gray-400 px-4 py-2 disabled:opacity-50">{saved ? "Start a new receipt" : "Cancel / remove photo"}</button>
-          </div>
-        )}
-        <div>
-          <button type="button" disabled={!file || loading || saving || saved} onClick={handleScan} className="rounded border border-gray-400 px-4 py-2 disabled:opacity-50">{loading ? "Scanning..." : "Scan receipt"}</button>
-          <p className="mt-2 text-sm">Review the extracted details before saving.</p>
+    <main className="mx-auto w-full max-w-6xl space-y-6 p-6" aria-busy={busy}>
+      <header className={!file ? "pt-8 text-center" : ""}><Link href="/" className="mb-3 inline-block text-sm underline">Back to expenses</Link><h1 className="text-3xl font-semibold">Scan receipts</h1><p className="mt-2">Take a photo of your receipt. We will read it for you.</p></header>
+      <section className={`space-y-4 rounded border border-gray-400 p-5 ${!file ? "py-10 text-center" : ""}`} aria-labelledby="upload-heading">
+        <h2 id="upload-heading" className="sr-only">Choose how to scan your receipts</h2>
+        <input ref={picker} aria-label="Choose receipt image or PDF" type="file" accept="image/*,application/pdf" onChange={selectFile} hidden disabled={busy || frozen} />
+        <div hidden={!cameraOpen} className="space-y-3" aria-label="Camera preview">
+          <video ref={video} autoPlay muted playsInline className="mx-auto max-h-96 w-full rounded bg-black object-contain" />
+          {cameraStarting && <p role="status">Preparing camera…</p>}
+          <div className="flex flex-wrap justify-center gap-3"><button type="button" className={`${button} min-h-14 px-8 font-semibold`} disabled={cameraStarting || busy} onClick={() => void capturePhoto()}>Take photo and scan</button><button type="button" className={button} onClick={closeCamera}>Close camera</button></div>
         </div>
+        <div className="mx-auto flex max-w-sm flex-col gap-3">
+          {!cameraOpen && <button type="button" className={`${button} min-h-14 font-semibold`} disabled={busy || frozen || cameraStarting} onClick={() => void openCamera()}>Use camera</button>}
+          <button type="button" className={button} disabled={busy || frozen} onClick={() => picker.current?.click()}>Upload file</button>
+          <p className="text-center text-sm">Choose an image or PDF up to 5 MB. Scanning starts automatically.</p>
+        </div>
+        {file && <div className="space-y-3"><p className="break-all font-medium">{file.name}</p>
+          {preview && (file.type === "application/pdf" ? <a href={preview} target="_blank" rel="noreferrer" className="underline">Open original PDF</a> :
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={preview} alt="Selected receipt" className="max-h-80 max-w-full object-contain" />)}
+          <div><button type="button" className={button} disabled={busy || frozen} onClick={() => void cancel()}>Cancel / remove file</button></div>
+          {!scanComplete && !busy && <button type="button" className={button} disabled={frozen} onClick={() => void startScan(file, false)}>Retry scan</button>}
+        </div>}
       </section>
-
-      <section className="space-y-4 rounded border border-gray-400 p-4" aria-labelledby="details-heading">
-        <h2 id="details-heading" className="text-lg font-medium">2. Review details</h2>
-        <p className="text-sm">{scanned ? "Review and edit the extracted details." : "Receipt details will appear here after scanning."}</p>
-        {scanned && typeof scanResult?.confidence === "number" && Number.isFinite(scanResult.confidence) && scanResult.confidence >= 0 && scanResult.confidence <= 1 && <p className="text-sm">AI confidence: {Math.round(scanResult.confidence * 100)}% (estimate only; verify the receipt)</p>}
-        <form onSubmit={handleReview} onChange={() => setMessage("")}>
-          <fieldset key={scanned ? "scanned" : "empty"} disabled={!scanned || saving || saved} className="space-y-3 disabled:opacity-60">
-            <p>Currency: {scanResult?.currency === "THB" ? "THB" : "Not identified"}</p>
-            {scanResult?.currency !== "THB" && <label className="block"><input name="confirmThb" type="checkbox" required /> I checked the original receipt and confirm the amount is in THB.</label>}
-            <label className="block">Shop name<input name="shopName" type="text" defaultValue={scanResult?.shop_name ?? ""} className="mt-1 block w-full rounded border border-gray-400 p-2" /></label>
-            <label className="block">Receipt date<input name="receiptDate" type="date" defaultValue={scanResult?.receipt_date ?? ""} className="mt-1 block w-full rounded border border-gray-400 p-2" /></label>
-            <label className="block">Total (THB)<input name="total" required type="number" min="0.01" max="99999999.99" step="0.01" defaultValue={scanResult?.total ?? ""} className="mt-1 block w-full rounded border border-gray-400 p-2" /></label>
-            <label className="block">Category<select name="category" value={categoryId} onChange={(event) => setCategoryId(event.target.value)} className="mt-1 block w-full rounded border border-gray-400 bg-transparent p-2"><option value="">No category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}{category.user_id ? " (personal)" : ""}</option>)}</select></label>
-            <label className="block">Note<textarea name="note" className="mt-1 block w-full rounded border border-gray-400 p-2" /></label>
-            <button type="submit" className="rounded border border-gray-400 px-4 py-2">{saving ? "Saving..." : "Save receipt"}</button>
-          </fieldset>
-        </form>
-        {message && <p role="status" className="text-sm">{message}</p>}
-        <p className="text-sm">Scanning uploads the photo; saving adds a receipt to your account.</p>
-      </section>
+      {busy && <div role="status" className="flex items-center gap-3"><span aria-hidden="true" className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-gray-400 border-t-transparent motion-reduce:animate-none" /><span>{labels[phase]}</span></div>}
+      {error && <p role="alert" className="text-red-600">{error}</p>}
+      {notice && <p role="status">{notice}</p>}
+      {scanComplete && <form onSubmit={saveAll} className="space-y-5">
+        <h2 className="text-lg font-medium">2. Review {drafts.length} receipt{drafts.length === 1 ? "" : "s"}</h2>
+        {!drafts.length && <p>No receipts to save. Add a receipt manually if AI missed it, or choose another file.</p>}
+        {drafts.map((draft, index) => <fieldset key={draft.id} disabled={busy || frozen || cameraOpen} className="space-y-3 rounded border border-gray-400 p-4 disabled:opacity-60">
+          <legend className="px-1 font-medium">Receipt {index + 1}</legend>
+          {scanWarning(draft.confidence) && <p className="rounded border border-amber-400 p-2 text-sm text-amber-700 dark:text-amber-300">{scanWarning(draft.confidence)}</p>}
+          <div className={file?.type === "application/pdf" && preview ? "grid gap-5 lg:grid-cols-2" : ""}>
+          {file?.type === "application/pdf" && preview && <PdfReceiptPreview url={preview} sourcePages={draft.sourcePages} index={index} />}
+          <div className="space-y-3">
+          {draft.sourcePages.length > 0 && <p className="text-sm">Source page(s): {draft.sourcePages.join(", ")} — check against the original</p>}
+          <label className="block">Shop name<input className={control} value={draft.shopName} onChange={(event) => update(draft.id, { shopName: event.target.value })} /></label>
+          <label className="block">Receipt date<input className={control} type="date" value={draft.date} onChange={(event) => update(draft.id, { date: event.target.value })} /></label>
+          <label className="block">Total (THB)<input className={control} type="number" required min="0.01" max="99999999.99" step="0.01" value={draft.total} onChange={(event) => update(draft.id, { total: event.target.value })} /></label>
+          <p>Currency: {draft.currency ?? "Not identified"}</p>
+          {draft.currency && draft.currency !== "THB" ? <p role="alert">This receipt is not in THB. Remove it before saving this batch.</p> : !draft.currency && <label className="block"><input type="checkbox" required checked={draft.confirmedThb} onChange={(event) => update(draft.id, { confirmedThb: event.target.checked })} /> I checked the original and confirm this amount is in THB.</label>}
+          <label className="block">Category<select className={control} value={draft.categoryId} onChange={(event) => update(draft.id, { categoryId: event.target.value })}><option value="">No category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}{category.user_id ? " (personal)" : ""}</option>)}</select></label>
+          <label className="block">Note<textarea className={control} value={draft.note} onChange={(event) => update(draft.id, { note: event.target.value })} /></label>
+          <button type="button" className={button} onClick={() => setDrafts((items) => items.filter((item) => item.id !== draft.id))}>Remove this receipt</button>
+          </div>
+          </div>
+        </fieldset>)}
+        <button type="button" className={button} disabled={busy || frozen} onClick={() => setDrafts((items) => [...items, toDraft()])}>Add a missing receipt</button>
+        {frozen && <p>The submitted batch is kept unchanged while its save status is checked.</p>}
+        <div><button type="submit" className={button} disabled={busy || cameraOpen || !drafts.length}>{frozen ? "Check status / retry Save all" : `Save all ${drafts.length} receipt${drafts.length === 1 ? "" : "s"}`}</button></div>
+      </form>}
     </main>
   );
 }

@@ -166,16 +166,13 @@ export default function ReceiptDetail() {
     setDeleting(true);
     setDeleteError("");
 
-    // Delete the row first: if the photo removal then fails, the expense is
-    // still gone and only an orphan file is left (see docs/receipt-cleanup.md).
+    // Multiple receipts can share the same source file. Keep it when deleting
+    // a row; reference-safe cleanup is handled separately.
     const { error } = await supabase.from("receipts").delete().eq("id", receipt.id);
     if (error) {
       setDeleting(false);
       setDeleteError(`Couldn't delete: ${error.message}`);
       return;
-    }
-    if (receipt.image_path) {
-      await supabase.storage.from(RECEIPTS_BUCKET).remove([receipt.image_path]);
     }
     router.replace("/");
   }
@@ -228,7 +225,14 @@ export default function ReceiptDetail() {
 
       {/* Photo */}
       <div className="overflow-hidden rounded-lg border bg-zinc-50 dark:bg-zinc-900">
-        {imageUrl ? (
+        {imageUrl && receipt.image_path?.toLowerCase().endsWith(".pdf") ? (
+          <div className="flex flex-col items-center gap-3 p-8 text-center">
+            <p>Original receipt document (PDF)</p>
+            <a href={imageUrl} target="_blank" rel="noopener noreferrer" className="rounded border px-4 py-2 underline">
+              Open original PDF
+            </a>
+          </div>
+        ) : imageUrl ? (
           <a href={imageUrl} target="_blank" rel="noopener noreferrer" title="Open full size">
             {/* Signed URLs change every load, so a plain img is simpler than next/image here */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -373,7 +377,7 @@ export default function ReceiptDetail() {
           {confirmDelete ? (
             <div className="flex flex-col gap-3 rounded-lg border border-red-300 p-4 dark:border-red-800">
               <p className="text-sm">
-                Delete this receipt and its photo? This can&apos;t be undone.
+                Delete this receipt? This can&apos;t be undone. The original file is kept because other receipts may use it.
               </p>
               {deleteError && (
                 <p role="alert" className="text-sm text-red-600">
