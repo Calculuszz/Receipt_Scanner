@@ -1,8 +1,15 @@
-// Receipt detail page (placeholder)
+// Receipt detail page: photo (signed URL), details, edit and delete
+import { Suspense } from "react";
+import AuthGuard from "@/components/AuthGuard";
+import ReceiptDetail from "@/components/ReceiptDetail";
+
 export default function ReceiptDetailPage() {
   return (
-    <main className="p-8">
-      <h1 className="text-2xl font-bold">Receipt detail (coming soon)</h1>
-    </main>
+    <AuthGuard>
+      {/* useParams reads a dynamic segment, so it must sit inside Suspense (Cache Components) */}
+      <Suspense fallback={<p className="opacity-70">Loading receipt...</p>}>
+        <ReceiptDetail />
+      </Suspense>
+    </AuthGuard>
   );
 }

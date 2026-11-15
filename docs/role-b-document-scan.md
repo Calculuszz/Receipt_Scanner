@@ -14,9 +14,9 @@ Authenticated POST /api/scan accepts `{ imagePath }`. It validates ownership, do
 
 ## Save all
 
-All reviewed sections are validated before any write. The entire batch is submitted in ONE Supabase insert request, relying on PostgREST's database transaction per request (not one request per row). Row IDs and field values are kept stable after the first attempt. A status check before and after submission uses all expected IDs under the current user. All found: confirmed saved; none found: same frozen batch may retry; subset found: stop and ask for investigation. A query failure never permits a blind new batch. Frozen retry state is in memory; after closing/reloading the tab, users should inspect /home before rescanning to avoid a new duplicate batch.
+All reviewed sections are validated before any write. The entire batch is submitted in ONE Supabase insert request, relying on PostgREST's database transaction per request (not one request per row). Row IDs and field values are kept stable after the first attempt. A status check before and after submission uses all expected IDs under the current user. All found: confirmed saved; none found: same frozen batch may retry; subset found: stop and ask for investigation. A query failure never permits a blind new batch. Frozen retry state is in memory; after closing/reloading the tab, users should inspect the expenses page at / before rescanning to avoid a new duplicate batch.
 
-Redirect to /home occurs only after the full batch is confirmed. The route belongs to Role A; it is intentionally not created here. The /home implementation must fetch current expenses, and any cached server data must be invalidated by the owning integration. Missing auth redirects to /login; temporary login and session-debug controls have been removed. Integration depends on Role A's real login page and cookie-based Supabase session.
+Redirect to / occurs only after the full batch is confirmed. This checkout already uses / for the Expenses page. The existing Expenses implementation must fetch current data, and any cached server data must be invalidated by the owning integration. Missing auth redirects to /login; temporary login and session-debug controls have been removed. Integration depends on Role A's real login page and cookie-based Supabase session.
 
 ## PDF bucket migration — Role C
 
@@ -28,7 +28,7 @@ Multiple receipts share one original PDF path. Role C's detail page must open PD
 
 Offline: TypeScript, scoped lint, receipt validation test, receipt batch test, cleanup test and production build. The batch test mocks a lost response, stable-ID retry, partial result and database-query failure. File preparation tests verify PDF pass-through, oversize rejection and image sizing with a mocked canvas; they do not prove browser decoding or OCR accuracy.
 
-Manual integration: real login; image and multi-page PDF; blank page; two receipts on one page; encrypted/corrupt PDF; no receipts; unknown and foreign currency; change/remove sections; one-click Save all; failed/uncertain save; two-account isolation; cancel cleanup; shared-source retention; mobile keyboard/upload; /home navigation and updated list. Confirm that selecting a file makes one automatic scan request and that progress remains visible.
+Manual integration: real login; image and multi-page PDF; blank page; two receipts on one page; encrypted/corrupt PDF; no receipts; unknown and foreign currency; change/remove sections; one-click Save all; failed/uncertain save; two-account isolation; cancel cleanup; shared-source retention; mobile keyboard/upload; Expenses page navigation and updated list. Confirm that selecting a file makes one automatic scan request and that progress remains visible.
 
 Source: https://ai.google.dev/gemini-api/docs/generate-content/document-processing
 Transaction reference: https://docs.postgrest.org/en/stable/references/transactions.html

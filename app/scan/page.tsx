@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { normalizeDocument, type ScannedReceipt } from "@/lib/receipt-validation";
+import { normalizeDocument, scanWarning, type ScannedReceipt } from "@/lib/receipt-validation";
 import { buildReceiptBatch, saveReceiptBatch, type ReceiptBatch, type ReceiptDraft } from "@/lib/receipt-batch";
 import { prepareReceiptFile } from "@/lib/receipt-file";
 
@@ -25,6 +26,25 @@ function toDraft(receipt?: ScannedReceipt, categories: Category[] = []): Receipt
     total: receipt?.total?.toString() ?? "", currency: receipt?.currency ?? null, confirmedThb: false,
     categoryId: category?.id ?? "", note: "", sourcePages: receipt?.source_pages ?? [], confidence: receipt?.confidence ?? null,
   };
+}
+
+function PdfReceiptPreview({ url, sourcePages, index }: { url: string; sourcePages: number[]; index: number }) {
+  const [page, setPage] = useState(sourcePages[0]?.toString() ?? "");
+  const pageNumber = Number(page);
+  const validPage = Number.isSafeInteger(pageNumber) && pageNumber > 0;
+  const pageUrl = validPage ? `${url}#page=${pageNumber}` : url;
+  return (
+    <div className="space-y-2 rounded border border-gray-400 p-3">
+      <p className="font-medium">Original PDF — receipt {index + 1}</p>
+      <p className="text-sm">{sourcePages.length ? `AI suggested page(s): ${sourcePages.join(", ")}. Verify the page against the original.` : "AI did not identify a page. Enter a page number or browse the document."}</p>
+      <label className="block text-sm">Page to display
+        <input type="number" min="1" step="1" inputMode="numeric" value={page} onChange={(event) => setPage(event.target.value)} placeholder="Full document" className={control} />
+      </label>
+      <iframe key={pageUrl} src={pageUrl} title={`PDF preview for receipt ${index + 1}`} className="h-80 w-full rounded border border-gray-400 bg-white lg:h-[36rem]" />
+      <a href={pageUrl} target="_blank" rel="noopener noreferrer" className="inline-block text-sm underline">Open PDF{validPage ? ` at page ${pageNumber}` : ""} in a new tab</a>
+      <p className="text-xs">Some browsers may ignore the page number or not show an embedded PDF. Use the link above if needed.</p>
+    </div>
+  );
 }
 
 export default function ScanPage() {
@@ -50,6 +70,15 @@ export default function ScanPage() {
   const busy = phase !== "idle" && phase !== "reviewing";
 
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+  useEffect(() => {
+    const requestRef = cameraRequest;
+    const streamRef = cameraStream;
+    return () => {
+      requestRef.current++;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, []);
   useEffect(() => {
     if (file) return;
     const request = ++cameraRequest.current;
@@ -90,6 +119,27 @@ export default function ScanPage() {
     cameraStream.current = null;
     if (video.current) video.current.srcObject = null;
     setCameraOpen(false); setCameraStarting(false);
+  }
+
+  async function openCamera() {
+    if (busy || frozen || cameraStarting || cameraOpen) return;
+    const request = ++cameraRequest.current;
+    setError(""); setCameraOpen(true); setCameraStarting(true);
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera unavailable");
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      if (request !== cameraRequest.current) { stream.getTracks().forEach((track) => track.stop()); return; }
+      cameraStream.current = stream;
+      if (!video.current) throw new Error("Camera preview unavailable");
+      video.current.srcObject = stream;
+      await video.current.play();
+    } catch {
+      if (request !== cameraRequest.current) return;
+      cameraStream.current?.getTracks().forEach((track) => track.stop());
+      cameraStream.current = null;
+      setCameraOpen(false);
+      setError("Could not open the camera. Allow camera access in your browser, or use Upload file.");
+    } finally { if (request === cameraRequest.current) setCameraStarting(false); }
   }
 
   async function capturePhoto() {
@@ -167,7 +217,7 @@ export default function ScanPage() {
     setCategories(items);
     setDrafts(result.receipts.map((receipt) => toDraft(receipt, items)));
     setScanComplete(true);
-    setNotice(categoryError ? "Categories could not be loaded. You can save without one." : "Check every receipt against the original before saving.");
+    setNotice(categoryError ? "Categories could not be loaded. You can save without one." : "");
     setPhase("reviewing");
   }
 
@@ -245,7 +295,7 @@ export default function ScanPage() {
       });
       source.current = null;
       setNotice("All receipts saved. Opening home…");
-      router.replace("/home"); router.refresh();
+      router.replace("/"); router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save was not confirmed. Retry to check the same batch.");
       setPhase("reviewing");
@@ -253,17 +303,18 @@ export default function ScanPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-2xl space-y-6 p-6" aria-busy={busy}>
-      <header className={!file ? "pt-8 text-center" : ""}><h1 className="text-3xl font-semibold">Scan receipts</h1><p className="mt-2">Take a photo of your receipt. We will read it for you.</p></header>
+    <main className="mx-auto w-full max-w-6xl space-y-6 p-6" aria-busy={busy}>
+      <header className={!file ? "pt-8 text-center" : ""}><Link href="/" className="mb-3 inline-block text-sm underline">Back to expenses</Link><h1 className="text-3xl font-semibold">Scan receipts</h1><p className="mt-2">Take a photo of your receipt. We will read it for you.</p></header>
       <section className={`space-y-4 rounded border border-gray-400 p-5 ${!file ? "py-10 text-center" : ""}`} aria-labelledby="upload-heading">
         <h2 id="upload-heading" className="sr-only">Choose how to scan your receipts</h2>
         <input ref={picker} aria-label="Choose receipt image or PDF" type="file" accept="image/*,application/pdf" onChange={selectFile} hidden disabled={busy || frozen} />
         <div hidden={!cameraOpen} className="space-y-3" aria-label="Camera preview">
           <video ref={video} autoPlay muted playsInline className="mx-auto max-h-96 w-full rounded bg-black object-contain" />
           {cameraStarting && <p role="status">Preparing camera…</p>}
-          <div className="flex justify-center"><button type="button" className={`${button} min-h-14 px-8 font-semibold`} disabled={cameraStarting || busy} onClick={() => void capturePhoto()}>Take photo and scan</button></div>
+          <div className="flex flex-wrap justify-center gap-3"><button type="button" className={`${button} min-h-14 px-8 font-semibold`} disabled={cameraStarting || busy} onClick={() => void capturePhoto()}>Take photo and scan</button><button type="button" className={button} onClick={closeCamera}>Close camera</button></div>
         </div>
         <div className="mx-auto flex max-w-sm flex-col gap-3">
+          {!cameraOpen && <button type="button" className={`${button} min-h-14 font-semibold`} disabled={busy || frozen || cameraStarting} onClick={() => void openCamera()}>Use camera</button>}
           <button type="button" className={button} disabled={busy || frozen} onClick={() => picker.current?.click()}>Upload file</button>
           <p className="text-center text-sm">Choose an image or PDF up to 5 MB. Scanning starts automatically.</p>
         </div>
@@ -283,6 +334,10 @@ export default function ScanPage() {
         {!drafts.length && <p>No receipts to save. Add a receipt manually if AI missed it, or choose another file.</p>}
         {drafts.map((draft, index) => <fieldset key={draft.id} disabled={busy || frozen || cameraOpen} className="space-y-3 rounded border border-gray-400 p-4 disabled:opacity-60">
           <legend className="px-1 font-medium">Receipt {index + 1}</legend>
+          {scanWarning(draft.confidence) && <p className="rounded border border-amber-400 p-2 text-sm text-amber-700 dark:text-amber-300">{scanWarning(draft.confidence)}</p>}
+          <div className={file?.type === "application/pdf" && preview ? "grid gap-5 lg:grid-cols-2" : ""}>
+          {file?.type === "application/pdf" && preview && <PdfReceiptPreview url={preview} sourcePages={draft.sourcePages} index={index} />}
+          <div className="space-y-3">
           {draft.sourcePages.length > 0 && <p className="text-sm">Source page(s): {draft.sourcePages.join(", ")} — check against the original</p>}
           <label className="block">Shop name<input className={control} value={draft.shopName} onChange={(event) => update(draft.id, { shopName: event.target.value })} /></label>
           <label className="block">Receipt date<input className={control} type="date" value={draft.date} onChange={(event) => update(draft.id, { date: event.target.value })} /></label>
@@ -292,6 +347,8 @@ export default function ScanPage() {
           <label className="block">Category<select className={control} value={draft.categoryId} onChange={(event) => update(draft.id, { categoryId: event.target.value })}><option value="">No category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}{category.user_id ? " (personal)" : ""}</option>)}</select></label>
           <label className="block">Note<textarea className={control} value={draft.note} onChange={(event) => update(draft.id, { note: event.target.value })} /></label>
           <button type="button" className={button} onClick={() => setDrafts((items) => items.filter((item) => item.id !== draft.id))}>Remove this receipt</button>
+          </div>
+          </div>
         </fieldset>)}
         <button type="button" className={button} disabled={busy || frozen} onClick={() => setDrafts((items) => [...items, toDraft()])}>Add a missing receipt</button>
         {frozen && <p>The submitted batch is kept unchanged while its save status is checked.</p>}

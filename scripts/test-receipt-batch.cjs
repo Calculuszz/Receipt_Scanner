@@ -8,7 +8,7 @@ require.extensions[".ts"] = (mod, filename) => {
   mod._compile(js, filename);
 };
 const { buildReceiptBatch, classifyBatch, saveReceiptBatch } = require(path.resolve("lib/receipt-batch.ts"));
-const { normalizeDocument } = require(path.resolve("lib/receipt-validation.ts"));
+const { normalizeDocument, scanWarning } = require(path.resolve("lib/receipt-validation.ts"));
 const { prepareReceiptFile } = require(path.resolve("lib/receipt-file.ts"));
 const draft = (id) => ({ id, shopName: "Shop", date: "2026-11-15", total: "93", currency: "THB", confirmedThb: false, categoryId: "", note: "", sourcePages: [1], confidence: null });
 
@@ -39,6 +39,14 @@ async function main() {
   assert.deepEqual(normalizeDocument({ receipts: [{ source_pages: [1, 2, -1, "3", 2] }] }).receipts[0].source_pages, [1, 2]);
   assert.throws(() => normalizeDocument({ shop_name: "old contract" }));
   assert.throws(() => normalizeDocument({ receipts: [null] }));
+  assert.equal(scanWarning(0.49), "Hard to read. Check every field against the photo.");
+  assert.equal(scanWarning(0.5), "Partly unclear. Check the details against the photo.");
+  assert.equal(scanWarning(0.799), "Partly unclear. Check the details against the photo.");
+  assert.equal(scanWarning(0.8), null);
+  assert.equal(scanWarning(null), null);
+  global.createImageBitmap = async () => { throw new Error("unsupported"); };
+  await assert.rejects(() => prepareReceiptFile(new File(["image"], "photo.heic", { type: "image/heic" })), /ยังไม่รองรับ HEIC/);
+  await assert.rejects(() => prepareReceiptFile(new File(["image"], "photo.jpg", { type: "image/jpeg" })), /Cannot open this image/);
   const pdf = new File(["%PDF-1.7 test"], "receipt.pdf", { type: "application/pdf" });
   assert.equal((await prepareReceiptFile(pdf)).blob, pdf);
   await assert.rejects(() => prepareReceiptFile(new File(["bad"], "bad.pdf", { type: "application/pdf" })), /PDF/);

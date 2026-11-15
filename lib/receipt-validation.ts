@@ -8,6 +8,13 @@ export function validDate(value: unknown): string | null {
 
 export class UnsupportedCurrencyError extends Error {}
 
+export function scanWarning(confidence: number | null): string | null {
+  if (confidence === null || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) return null;
+  if (confidence < 0.5) return "Hard to read. Check every field against the photo.";
+  if (confidence < 0.8) return "Partly unclear. Check the details against the photo.";
+  return null;
+}
+
 export function normalizeReceipt(result: unknown, allowUnsupportedCurrency = false) {
   if (typeof result !== "object" || result === null || Array.isArray(result)) throw new Error("Invalid Gemini response");
   const fields = result as Record<string, unknown>;

@@ -129,7 +129,7 @@ create policy "own receipts" on public.receipts
 
 -- =========================================================
 -- STORAGE: private "receipts" bucket, files under {user_id}/
--- Max 5 MB; JPEG, PNG, WebP, HEIC, PDF. PDFs may be shared by several receipts.
+-- Max 5 MB; JPEG, PNG, WebP, HEIC, PDF. Use signed URLs for private files.
 -- =========================================================
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('receipts', 'receipts', false, 5242880, array['image/jpeg','image/png','image/webp','image/heic','application/pdf']);

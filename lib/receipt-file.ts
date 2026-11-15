@@ -8,10 +8,14 @@ export async function prepareReceiptFile(file: File): Promise<{ blob: Blob; exte
     if (header !== "%PDF-") throw new Error("This file does not appear to be a PDF.");
     return { blob: file, extension: "pdf" };
   }
-  if (!file.type.startsWith("image/")) throw new Error("Choose an image or PDF.");
+  const isHeic = /\.(heic|heif)$/i.test(file.name) || ["image/heic", "image/heif"].includes(file.type.toLowerCase());
+  if (!file.type.startsWith("image/") && !isHeic) throw new Error("Choose an image or PDF.");
   let bitmap: ImageBitmap;
   try { bitmap = await createImageBitmap(file); }
-  catch { throw new Error("Cannot open this image. Try JPEG or PNG."); }
+  catch {
+    if (isHeic) throw new Error("ยังไม่รองรับ HEIC บนคอม ให้แปลงเป็น JPG ก่อน หรือถ่ายด้วยปุ่มกล้องแทน");
+    throw new Error("Cannot open this image. Try JPEG or PNG.");
+  }
   try {
     const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement("canvas");
