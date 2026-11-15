@@ -7,6 +7,9 @@ import { createClient } from "@/lib/supabase/client";
 import { normalizeDocument, scanWarning, type ScannedReceipt } from "@/lib/receipt-validation";
 import { buildReceiptBatch, saveReceiptBatch, type ReceiptBatch, type ReceiptDraft } from "@/lib/receipt-batch";
 import { prepareReceiptFile } from "@/lib/receipt-file";
+import { ICONS, setFlash } from "@/lib/ui";
+import { Icon, Spinner } from "@/components/ui";
+import AuthGuard from "@/components/AuthGuard";
 
 type Phase = "idle" | "preparing" | "uploading" | "scanning" | "reviewing" | "saving" | "cancelling";
 type Category = { id: string; name: string; user_id: string | null };
@@ -15,8 +18,8 @@ const labels: Partial<Record<Phase, string>> = {
   preparing: "Preparing your file…", uploading: "Uploading your file…", scanning: "Reading receipts…",
   saving: "Saving all receipts…", cancelling: "Removing unsaved file…",
 };
-const control = "mt-1 block w-full rounded border border-gray-400 bg-transparent p-2";
-const button = "rounded border border-gray-400 px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50";
+const rowInput = "min-w-0 flex-1 bg-transparent text-right text-[15px] text-fg outline-none placeholder:text-muted";
+const secondary = "tap flex h-12 items-center justify-center gap-2 rounded-2xl bg-surface px-4 text-[15px] font-medium disabled:opacity-50";
 
 function toDraft(receipt?: ScannedReceipt, categories: Category[] = []): ReceiptDraft {
   const category = categories.find((item) => item.name === receipt?.category && item.user_id === null)
@@ -34,20 +37,28 @@ function PdfReceiptPreview({ url, sourcePages, index }: { url: string; sourcePag
   const validPage = Number.isSafeInteger(pageNumber) && pageNumber > 0;
   const pageUrl = validPage ? `${url}#page=${pageNumber}` : url;
   return (
-    <div className="space-y-2 rounded border border-gray-400 p-3">
-      <p className="font-medium">Original PDF — receipt {index + 1}</p>
-      <p className="text-sm">{sourcePages.length ? `AI suggested page(s): ${sourcePages.join(", ")}. Verify the page against the original.` : "AI did not identify a page. Enter a page number or browse the document."}</p>
-      <label className="block text-sm">Page to display
-        <input type="number" min="1" step="1" inputMode="numeric" value={page} onChange={(event) => setPage(event.target.value)} placeholder="Full document" className={control} />
+    <div className="space-y-3 rounded-[20px] bg-surface p-4">
+      <p className="text-[15px] font-medium">Original PDF</p>
+      <p className="text-[13px] text-muted">{sourcePages.length ? `Found on page ${sourcePages.join(", ")}. Check it against the original.` : "We couldn't tell which page. Enter a page number or scroll the document."}</p>
+      <label className="flex min-h-11 items-center gap-3 rounded-xl bg-surface2 px-3 text-[15px]">
+        <span className="shrink-0">Page</span>
+        <input type="number" min="1" step="1" inputMode="numeric" value={page} onChange={(event) => setPage(event.target.value)} placeholder="All" className={rowInput} />
       </label>
-      <iframe key={pageUrl} src={pageUrl} title={`PDF preview for receipt ${index + 1}`} className="h-80 w-full rounded border border-gray-400 bg-white lg:h-[36rem]" />
-      <a href={pageUrl} target="_blank" rel="noopener noreferrer" className="inline-block text-sm underline">Open PDF{validPage ? ` at page ${pageNumber}` : ""} in a new tab</a>
-      <p className="text-xs">Some browsers may ignore the page number or not show an embedded PDF. Use the link above if needed.</p>
+      <iframe key={pageUrl} src={pageUrl} title={`PDF preview for receipt ${index + 1}`} className="h-80 w-full rounded-xl bg-white" />
+      <a href={pageUrl} target="_blank" rel="noopener noreferrer" className="inline-block text-[13px] font-medium underline">Open PDF{validPage ? ` at page ${pageNumber}` : ""} in a new tab</a>
     </div>
   );
 }
 
 export default function ScanPage() {
+  return (
+    <AuthGuard>
+      <ScanScreen />
+    </AuthGuard>
+  );
+}
+
+function ScanScreen() {
   const router = useRouter();
   const picker = useRef<HTMLInputElement>(null);
   const video = useRef<HTMLVideoElement>(null);
@@ -101,8 +112,9 @@ export default function ScanPage() {
         if (cancelled || request !== cameraRequest.current) return;
         cameraStream.current?.getTracks().forEach((track) => track.stop());
         cameraStream.current = null;
+        // No camera, or permission not given yet: quietly fall back to the
+        // Use camera / Upload buttons instead of greeting the user with an error.
         setCameraOpen(false);
-        setError("Camera access is unavailable. Allow camera access in your browser, or use Upload file.");
       } finally {
         if (!cancelled && request === cameraRequest.current) setCameraStarting(false);
       }
@@ -294,7 +306,9 @@ export default function ScanPage() {
         },
       });
       source.current = null;
-      setNotice("All receipts saved. Opening home…");
+      const count = pending.current?.rows.length ?? drafts.length;
+      setFlash({ text: count === 1 ? "Receipt saved" : `${count} receipts saved` });
+      setNotice("Saved. Opening your expenses…");
       router.replace("/"); router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save was not confirmed. Retry to check the same batch.");
@@ -302,58 +316,194 @@ export default function ScanPage() {
     } finally { lock.current = false; }
   }
 
+  const isPdf = file?.type === "application/pdf";
+
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-6 p-6" aria-busy={busy}>
-      <header className={!file ? "pt-8 text-center" : ""}><Link href="/" className="mb-3 inline-block text-sm underline">Back to expenses</Link><h1 className="text-3xl font-semibold">Scan receipts</h1><p className="mt-2">Take a photo of your receipt. We will read it for you.</p></header>
-      <section className={`space-y-4 rounded border border-gray-400 p-5 ${!file ? "py-10 text-center" : ""}`} aria-labelledby="upload-heading">
-        <h2 id="upload-heading" className="sr-only">Choose how to scan your receipts</h2>
+    <main className="flex min-h-screen flex-col pb-36" aria-busy={busy}>
+      <header className="grid grid-cols-[44px_minmax(0,1fr)_44px] items-center px-4 pb-2 pt-[max(20px,env(safe-area-inset-top))]">
+        <Link href="/" aria-label="Back to expenses" className="tap flex h-11 w-11 items-center justify-center rounded-full bg-surface">
+          <Icon d={ICONS.back} stroke={2.2} />
+        </Link>
+        <h1 className="text-center text-[17px] font-semibold">{scanComplete ? "Check details" : "Scan receipt"}</h1>
+        <span />
+      </header>
+
+      <div className="flex flex-col gap-3.5 px-5 pt-2">
         <input ref={picker} aria-label="Choose receipt image or PDF" type="file" accept="image/*,application/pdf" onChange={selectFile} hidden disabled={busy || frozen} />
-        <div hidden={!cameraOpen} className="space-y-3" aria-label="Camera preview">
-          <video ref={video} autoPlay muted playsInline className="mx-auto max-h-96 w-full rounded bg-black object-contain" />
-          {cameraStarting && <p role="status">Preparing camera…</p>}
-          <div className="flex flex-wrap justify-center gap-3"><button type="button" className={`${button} min-h-14 px-8 font-semibold`} disabled={cameraStarting || busy} onClick={() => void capturePhoto()}>Take photo and scan</button><button type="button" className={button} onClick={closeCamera}>Close camera</button></div>
-        </div>
-        <div className="mx-auto flex max-w-sm flex-col gap-3">
-          {!cameraOpen && <button type="button" className={`${button} min-h-14 font-semibold`} disabled={busy || frozen || cameraStarting} onClick={() => void openCamera()}>Use camera</button>}
-          <button type="button" className={button} disabled={busy || frozen} onClick={() => picker.current?.click()}>Upload file</button>
-          <p className="text-center text-sm">Choose an image or PDF up to 5 MB. Scanning starts automatically.</p>
-        </div>
-        {file && <div className="space-y-3"><p className="break-all font-medium">{file.name}</p>
-          {preview && (file.type === "application/pdf" ? <a href={preview} target="_blank" rel="noreferrer" className="underline">Open original PDF</a> :
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={preview} alt="Selected receipt" className="max-h-80 max-w-full object-contain" />)}
-          <div><button type="button" className={button} disabled={busy || frozen} onClick={() => void cancel()}>Cancel / remove file</button></div>
-          {!scanComplete && !busy && <button type="button" className={button} disabled={frozen} onClick={() => void startScan(file, false)}>Retry scan</button>}
-        </div>}
-      </section>
-      {busy && <div role="status" className="flex items-center gap-3"><span aria-hidden="true" className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-gray-400 border-t-transparent motion-reduce:animate-none" /><span>{labels[phase]}</span></div>}
-      {error && <p role="alert" className="text-red-600">{error}</p>}
-      {notice && <p role="status">{notice}</p>}
-      {scanComplete && <form onSubmit={saveAll} className="space-y-5">
-        <h2 className="text-lg font-medium">2. Review {drafts.length} receipt{drafts.length === 1 ? "" : "s"}</h2>
-        {!drafts.length && <p>No receipts to save. Add a receipt manually if AI missed it, or choose another file.</p>}
-        {drafts.map((draft, index) => <fieldset key={draft.id} disabled={busy || frozen || cameraOpen} className="space-y-3 rounded border border-gray-400 p-4 disabled:opacity-60">
-          <legend className="px-1 font-medium">Receipt {index + 1}</legend>
-          {scanWarning(draft.confidence) && <p className="rounded border border-amber-400 p-2 text-sm text-amber-700 dark:text-amber-300">{scanWarning(draft.confidence)}</p>}
-          <div className={file?.type === "application/pdf" && preview ? "grid gap-5 lg:grid-cols-2" : ""}>
-          {file?.type === "application/pdf" && preview && <PdfReceiptPreview url={preview} sourcePages={draft.sourcePages} index={index} />}
-          <div className="space-y-3">
-          {draft.sourcePages.length > 0 && <p className="text-sm">Source page(s): {draft.sourcePages.join(", ")} — check against the original</p>}
-          <label className="block">Shop name<input className={control} value={draft.shopName} onChange={(event) => update(draft.id, { shopName: event.target.value })} /></label>
-          <label className="block">Receipt date<input className={control} type="date" value={draft.date} onChange={(event) => update(draft.id, { date: event.target.value })} /></label>
-          <label className="block">Total (THB)<input className={control} type="number" required min="0.01" max="99999999.99" step="0.01" value={draft.total} onChange={(event) => update(draft.id, { total: event.target.value })} /></label>
-          <p>Currency: {draft.currency ?? "Not identified"}</p>
-          {draft.currency && draft.currency !== "THB" ? <p role="alert">This receipt is not in THB. Remove it before saving this batch.</p> : !draft.currency && <label className="block"><input type="checkbox" required checked={draft.confirmedThb} onChange={(event) => update(draft.id, { confirmedThb: event.target.checked })} /> I checked the original and confirm this amount is in THB.</label>}
-          <label className="block">Category<select className={control} value={draft.categoryId} onChange={(event) => update(draft.id, { categoryId: event.target.value })}><option value="">No category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}{category.user_id ? " (personal)" : ""}</option>)}</select></label>
-          <label className="block">Note<textarea className={control} value={draft.note} onChange={(event) => update(draft.id, { note: event.target.value })} /></label>
-          <button type="button" className={button} onClick={() => setDrafts((items) => items.filter((item) => item.id !== draft.id))}>Remove this receipt</button>
+
+        {/* Live camera */}
+        <section hidden={!cameraOpen} aria-label="Camera" className="anim-fade overflow-hidden rounded-[28px] bg-[#050505] text-white">
+          <div className="relative">
+            <video ref={video} autoPlay muted playsInline className="aspect-[3/4] w-full bg-black object-cover" />
+            <span aria-hidden="true" className="absolute left-6 top-6 h-9 w-9 rounded-tl-[14px] border-l-[3px] border-t-[3px] border-white" />
+            <span aria-hidden="true" className="absolute right-6 top-6 h-9 w-9 rounded-tr-[14px] border-r-[3px] border-t-[3px] border-white" />
+            <span aria-hidden="true" className="absolute bottom-6 left-6 h-9 w-9 rounded-bl-[14px] border-b-[3px] border-l-[3px] border-white" />
+            <span aria-hidden="true" className="absolute bottom-6 right-6 h-9 w-9 rounded-br-[14px] border-b-[3px] border-r-[3px] border-white" />
+            <p className="absolute inset-x-0 bottom-16 mx-auto w-fit rounded-full bg-white/15 px-3.5 py-2 text-[13px] backdrop-blur-sm">
+              {cameraStarting ? "Starting camera…" : "Fit the whole receipt inside the frame"}
+            </p>
           </div>
+          <div className="grid grid-cols-3 items-center px-6 pb-6 pt-5">
+            <div className="flex flex-col items-center gap-1.5">
+              <button type="button" aria-label="Upload a photo or PDF instead" disabled={busy || frozen} onClick={() => picker.current?.click()}
+                className="tap flex h-[52px] w-[52px] items-center justify-center rounded-full bg-white/15">
+                <Icon d={ICONS.upload} size={22} />
+              </button>
+              <span className="text-xs text-white/75">Upload</span>
+            </div>
+            <div className="flex justify-center">
+              <button type="button" aria-label="Take photo and scan" disabled={cameraStarting || busy} onClick={() => void capturePhoto()}
+                className="tap flex h-20 w-20 items-center justify-center rounded-full border-4 border-white p-[5px] disabled:opacity-50">
+                <span className="block h-full w-full rounded-full bg-white" />
+              </button>
+            </div>
+            <div className="flex flex-col items-center gap-1.5">
+              <button type="button" aria-label="Close camera" onClick={closeCamera}
+                className="tap flex h-[52px] w-[52px] items-center justify-center rounded-full bg-white/15">
+                <Icon d={ICONS.close} size={20} stroke={2} />
+              </button>
+              <span className="text-xs text-white/75">Close</span>
+            </div>
           </div>
-        </fieldset>)}
-        <button type="button" className={button} disabled={busy || frozen} onClick={() => setDrafts((items) => [...items, toDraft()])}>Add a missing receipt</button>
-        {frozen && <p>The submitted batch is kept unchanged while its save status is checked.</p>}
-        <div><button type="submit" className={button} disabled={busy || cameraOpen || !drafts.length}>{frozen ? "Check status / retry Save all" : `Save all ${drafts.length} receipt${drafts.length === 1 ? "" : "s"}`}</button></div>
-      </form>}
+        </section>
+
+        {/* Start: choose camera or file */}
+        {!cameraOpen && !file && (
+          <section className="anim-fade flex flex-col gap-3 pt-6">
+            <p className="text-[28px] font-semibold leading-tight tracking-[-0.03em]">Snap or upload a receipt</p>
+            <p className="text-[15px] text-muted">We&apos;ll read the shop, date and total. One photo or PDF can hold several receipts.</p>
+            <button type="button" disabled={busy || frozen || cameraStarting} onClick={() => void openCamera()}
+              className="tap mt-4 flex h-14 items-center justify-center gap-2.5 rounded-[18px] bg-fg text-[17px] font-semibold text-bg disabled:opacity-60">
+              <Icon d={ICONS.camera} size={22} stroke={1.9} /> Use camera
+            </button>
+            <button type="button" disabled={busy || frozen} onClick={() => picker.current?.click()}
+              className="tap flex h-14 items-center justify-center gap-2.5 rounded-[18px] bg-surface text-[17px] font-medium">
+              <Icon d={ICONS.upload} size={22} /> Upload photo or PDF
+            </button>
+            <p className="text-center text-[13px] text-muted">JPG, PNG or PDF up to 5 MB. Scanning starts by itself.</p>
+          </section>
+        )}
+
+        {/* Chosen file */}
+        {file && (
+          <section className="anim-rise flex items-center gap-3.5 rounded-[20px] bg-surface p-3">
+            {preview && !isPdf ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={preview} alt="" className="h-[62px] w-[46px] shrink-0 rounded-md object-cover" />
+            ) : (
+              <span className="flex h-[62px] w-[46px] shrink-0 items-center justify-center rounded-md bg-surface2 text-muted"><Icon d={ICONS.file} size={22} /></span>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[15px] font-medium">{scanComplete ? `${drafts.length} receipt${drafts.length === 1 ? "" : "s"} found` : file.name}</p>
+              {isPdf && preview ? (
+                <a href={preview} target="_blank" rel="noreferrer" className="text-[13px] text-muted underline">Open original PDF</a>
+              ) : (
+                <p className="text-[13px] text-muted">{scanComplete ? "Check each one before saving" : "Your photo"}</p>
+              )}
+            </div>
+            <button type="button" disabled={busy || frozen} onClick={() => void cancel()} className="tap h-10 rounded-full bg-surface2 px-3.5 text-sm font-medium">
+              {scanComplete ? "Retake" : "Remove"}
+            </button>
+          </section>
+        )}
+        {file && !scanComplete && !busy && (
+          <button type="button" className={secondary} disabled={frozen} onClick={() => void startScan(file, false)}>Try scanning again</button>
+        )}
+
+        {busy && (
+          <div role="status" className="anim-rise flex items-center gap-3.5 rounded-[20px] bg-surface p-4">
+            <span className="text-brand"><Spinner size={24} /></span>
+            <div>
+              <p className="text-base font-medium">{labels[phase]}</p>
+              {phase === "scanning" && <p className="text-[13px] text-muted">This takes a few seconds. Keep this screen open.</p>}
+            </div>
+          </div>
+        )}
+        {error && <p role="alert" className="anim-rise rounded-2xl bg-surface p-4 text-[15px] leading-snug text-danger">{error}</p>}
+        {notice && <p role="status" className="mx-1 text-sm text-muted">{notice}</p>}
+
+        {scanComplete && (
+          <form onSubmit={saveAll} className="flex flex-col gap-5 pt-1">
+            {!drafts.length && (
+              <p className="rounded-[20px] bg-surface p-4 text-[15px]">No receipts to save. Add one by hand if we missed it, or choose another file.</p>
+            )}
+            {drafts.map((draft, index) => {
+              const warning = scanWarning(draft.confidence);
+              return (
+                <fieldset key={draft.id} disabled={busy || frozen || cameraOpen} className="anim-rise flex min-w-0 flex-col gap-3 disabled:opacity-60" style={{ animationDelay: `${index * 60}ms` }}>
+                  {drafts.length > 1 && <legend className="mx-1 mb-2.5 text-[13px] font-semibold uppercase tracking-wider text-muted">Receipt {index + 1}</legend>}
+                  {warning && (
+                    <p className="flex items-start gap-2.5 rounded-2xl bg-warn-bg px-3.5 py-3 text-sm leading-snug text-warn-fg">
+                      <Icon d={ICONS.warn} size={18} stroke={2} className="mt-px shrink-0" />{warning}
+                    </p>
+                  )}
+                  {isPdf && preview && <PdfReceiptPreview url={preview} sourcePages={draft.sourcePages} index={index} />}
+
+                  <label className="block rounded-[20px] bg-surface p-4">
+                    <span className="block text-[13px] text-muted">Total paid</span>
+                    <span className="mt-1 flex items-baseline gap-1">
+                      <span className="text-[30px] font-medium">฿</span>
+                      <input type="number" required min="0.01" max="99999999.99" step="0.01" inputMode="decimal" aria-label="Total in baht"
+                        value={draft.total} onChange={(event) => update(draft.id, { total: event.target.value })}
+                        className="min-w-0 flex-1 bg-transparent text-[40px] font-semibold tracking-[-0.03em] tabular-nums outline-none" />
+                    </span>
+                  </label>
+
+                  <div className="rounded-[20px] bg-surface px-4">
+                    <label className="flex min-h-[52px] items-center gap-3 border-b border-line">
+                      <span className="w-[72px] shrink-0 text-[15px]">Shop</span>
+                      <input className={rowInput} value={draft.shopName} placeholder="Shop name" onChange={(event) => update(draft.id, { shopName: event.target.value })} />
+                    </label>
+                    <label className="flex min-h-[52px] items-center gap-3 border-b border-line">
+                      <span className="w-[72px] shrink-0 text-[15px]">Date</span>
+                      <input className={rowInput} type="date" value={draft.date} onChange={(event) => update(draft.id, { date: event.target.value })} />
+                    </label>
+                    <label className="flex min-h-[52px] items-center gap-3 border-b border-line">
+                      <span className="w-[72px] shrink-0 text-[15px]">Category</span>
+                      <select className={`${rowInput} appearance-none`} value={draft.categoryId} onChange={(event) => update(draft.id, { categoryId: event.target.value })}>
+                        <option value="">No category</option>
+                        {categories.map((category) => <option key={category.id} value={category.id}>{category.name}{category.user_id ? " (personal)" : ""}</option>)}
+                      </select>
+                      <Icon d={ICONS.chevron} size={16} stroke={2} className="shrink-0 rotate-90 text-muted" />
+                    </label>
+                    <label className="flex min-h-[52px] items-center gap-3">
+                      <span className="w-[72px] shrink-0 text-[15px]">Note</span>
+                      <input className={rowInput} value={draft.note} placeholder="Add a note" onChange={(event) => update(draft.id, { note: event.target.value })} />
+                    </label>
+                  </div>
+
+                  {draft.currency && draft.currency !== "THB" ? (
+                    <p role="alert" className="rounded-2xl bg-surface p-4 text-sm text-danger">This receipt isn&apos;t in Thai baht ({draft.currency}). Remove it to save the others.</p>
+                  ) : !draft.currency && (
+                    <label className="flex items-center gap-3 rounded-2xl bg-surface px-4 py-3 text-sm">
+                      <input type="checkbox" required checked={draft.confirmedThb} onChange={(event) => update(draft.id, { confirmedThb: event.target.checked })} className="h-5 w-5 shrink-0 accent-[#22D27F]" />
+                      We couldn&apos;t see the currency. I checked: this amount is in baht.
+                    </label>
+                  )}
+
+                  {drafts.length > 1 && (
+                    <button type="button" className="tap h-11 self-center rounded-full px-4 text-[15px] font-medium text-danger" onClick={() => setDrafts((items) => items.filter((item) => item.id !== draft.id))}>
+                      Remove this receipt
+                    </button>
+                  )}
+                </fieldset>
+              );
+            })}
+            <button type="button" className={secondary} disabled={busy || frozen} onClick={() => setDrafts((items) => [...items, toDraft()])}>
+              + Add a receipt we missed
+            </button>
+            {frozen && <p className="mx-1 text-[13px] text-muted">We&apos;re keeping this batch as it is while we check whether it saved.</p>}
+
+            <div className="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-md bg-bg px-5 pb-[max(30px,env(safe-area-inset-bottom))] pt-3">
+              <button type="submit" disabled={busy || cameraOpen || !drafts.length}
+                className="tap flex h-14 w-full items-center justify-center gap-2.5 rounded-[18px] bg-brand text-[17px] font-semibold text-ink disabled:opacity-50">
+                {phase === "saving" && <Spinner />}
+                {frozen ? "Check status and retry" : drafts.length === 1 ? "Save receipt" : `Save ${drafts.length} receipts`}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </main>
   );
 }
