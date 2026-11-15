@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { normalizeDocument, scanWarning, type ScannedReceipt } from "@/lib/receipt-validation";
 import { buildReceiptBatch, saveReceiptBatch, type ReceiptBatch, type ReceiptDraft } from "@/lib/receipt-batch";
 import { prepareReceiptFile } from "@/lib/receipt-file";
-import { ICONS, categoryForOther, isDefaultOther, longDate, money, monthName, setFlash, todayIso } from "@/lib/ui";
+import { ICONS, categoryForOther, isDefaultOther, longDate, money, setFlash, todayIso } from "@/lib/ui";
 import { Icon, Spinner } from "@/components/ui";
 import AuthGuard from "@/components/AuthGuard";
 
@@ -343,15 +343,7 @@ function ScanScreen() {
       source.current = null;
       const saved = pending.current?.rows ?? [];
       const count = saved.length;
-      // Open Home on the month these receipts belong to (receipt date, else today).
-      const months = [...new Set(saved.map((r) => (r.receipt_date ?? todayIso()).slice(0, 7)))].sort();
-      const month = months[months.length - 1] ?? todayIso().slice(0, 7);
-      const thisMonth = todayIso().slice(0, 7);
-      const where = months.length === 1 && month !== thisMonth ? ` to ${monthName(month)}` : "";
-      setFlash({
-        text: `${count === 1 ? "Receipt" : `${count} receipts`} saved${where}`,
-        month, ids: saved.map((r) => r.id), scanNext: true,
-      });
+      setFlash({ text: count === 1 ? "Receipt saved" : `${count} receipts saved`, ids: saved.map((r) => r.id), scanNext: true });
       // Leave this page clean, so coming back starts a fresh scan.
       pending.current = null;
       setFrozen(false); setFile(null); setPreview(null); setDrafts([]); setScanComplete(false);
