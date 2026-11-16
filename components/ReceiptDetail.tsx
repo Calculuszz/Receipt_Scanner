@@ -192,11 +192,12 @@ export default function ReceiptDetail() {
   const isPdf = receipt.image_path?.toLowerCase().endsWith(".pdf");
 
   return (
-    <div className="anim-push min-h-screen pb-10">
+    // Phone: coloured header on top. Tablet/desktop: header card on the left, details on the right.
+    <div className="anim-push mx-auto min-h-screen w-full max-w-md pb-10 md:grid md:max-w-5xl md:grid-cols-[minmax(0,400px)_minmax(0,1fr)] md:items-start md:gap-8 md:px-10 md:pt-10 lg:gap-12">
       {toast && <Toast text={toast} onDone={() => setToast("")} />}
 
       {/* Hero in the category colour */}
-      <header className="rounded-b-[34px] px-5 pb-6 pt-[max(20px,env(safe-area-inset-top))] text-ink" style={{ background: style.color }}>
+      <header className="rounded-b-[34px] px-5 pb-6 pt-[max(20px,env(safe-area-inset-top))] text-ink md:sticky md:top-10 md:rounded-[34px] md:p-7" style={{ background: style.color }}>
         <div className="flex items-center justify-between">
           <Link href="/" aria-label="Back to expenses" className="tap flex h-11 w-11 items-center justify-center rounded-full bg-black/10">
             <Icon d={ICONS.back} stroke={2.2} />
@@ -217,7 +218,7 @@ export default function ReceiptDetail() {
         <p className="mt-2 text-sm text-black/70">{receipt.receipt_date ? `Paid ${longDate(receipt.receipt_date)}` : "No date on the receipt"}</p>
       </header>
 
-      <div className="flex flex-col gap-3 px-5 pt-[18px]">
+      <div className="flex flex-col gap-3 px-5 pt-[18px] md:px-0 md:pt-0">
         {/* Photo / original file */}
         {imageUrl ? (
           <a href={imageUrl} target="_blank" rel="noopener noreferrer" className="tap flex items-center gap-3.5 rounded-[20px] bg-surface p-3">
@@ -226,7 +227,7 @@ export default function ReceiptDetail() {
             ) : (
               // Signed URLs change every load, so a plain img is simpler than next/image here
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={imageUrl} alt="" className="h-[70px] w-[52px] shrink-0 rounded-md object-cover" />
+              <img src={imageUrl} alt="" className="h-[70px] w-[52px] shrink-0 rounded-md object-cover md:h-[112px] md:w-[84px]" />
             )}
             <span className="flex-1">
               <span className="block text-[15px] font-medium">{isPdf ? "Original PDF" : "Receipt photo"}</span>

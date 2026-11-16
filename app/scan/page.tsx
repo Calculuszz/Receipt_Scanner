@@ -358,8 +358,8 @@ function ScanScreen() {
   const isPdf = file?.type === "application/pdf";
 
   return (
-    <main className="flex min-h-screen flex-col pb-36" aria-busy={busy}>
-      <header className="grid grid-cols-[44px_minmax(0,1fr)_44px] items-center px-4 pb-2 pt-[max(20px,env(safe-area-inset-top))]">
+    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col pb-36 md:max-w-2xl" aria-busy={busy}>
+      <header className="grid grid-cols-[44px_minmax(0,1fr)_44px] items-center px-4 pb-2 pt-[max(20px,env(safe-area-inset-top))] md:px-10 md:pt-10">
         <Link href="/" aria-label="Back to expenses" className="tap flex h-11 w-11 items-center justify-center rounded-full bg-surface">
           <Icon d={ICONS.back} stroke={2.2} />
         </Link>
@@ -367,13 +367,13 @@ function ScanScreen() {
         <span />
       </header>
 
-      <div className="flex flex-col gap-3.5 px-5 pt-2">
+      <div className="flex flex-col gap-3.5 px-5 pt-2 md:px-10">
         <input ref={picker} aria-label="Choose receipt image or PDF" type="file" accept="image/*,application/pdf" onChange={selectFile} hidden disabled={busy || frozen} />
 
         {/* Live camera */}
         <section hidden={!cameraOpen} aria-label="Camera" className="anim-fade overflow-hidden rounded-[28px] bg-[#050505] text-white">
           <div className="relative">
-            <video ref={video} autoPlay muted playsInline className="aspect-[3/4] w-full bg-black object-cover" />
+            <video ref={video} autoPlay muted playsInline className="aspect-[3/4] max-h-[70vh] w-full bg-black object-cover md:aspect-[4/3]" />
             <span aria-hidden="true" className="absolute left-6 top-6 h-9 w-9 rounded-tl-[14px] border-l-[3px] border-t-[3px] border-white" />
             <span aria-hidden="true" className="absolute right-6 top-6 h-9 w-9 rounded-tr-[14px] border-r-[3px] border-t-[3px] border-white" />
             <span aria-hidden="true" className="absolute bottom-6 left-6 h-9 w-9 rounded-bl-[14px] border-b-[3px] border-l-[3px] border-white" />
@@ -543,7 +543,7 @@ function ScanScreen() {
             </button>
             {frozen && <p className="mx-1 text-[13px] text-muted">We&apos;re keeping this batch as it is while we check whether it saved.</p>}
 
-            <div className="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-md bg-bg px-5 pb-[max(30px,env(safe-area-inset-bottom))] pt-3">
+            <div className="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-md bg-bg px-5 pb-[max(30px,env(safe-area-inset-bottom))] pt-3 md:max-w-2xl md:px-10">
               <button type="submit" disabled={busy || cameraOpen || !drafts.length}
                 className="tap flex h-14 w-full items-center justify-center gap-2.5 rounded-[18px] bg-brand text-[17px] font-semibold text-ink disabled:opacity-50">
                 {phase === "saving" && <Spinner />}
