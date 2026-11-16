@@ -32,5 +32,5 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   // Cache Components keeps a page you leave alive (React Activity), so coming back
   // to /scan used to show the old "Saving…" state. Keying on bfcacheId gives every
   // fresh visit (Link, push, replace) a clean page; browser Back still restores it.
-  return <div key={bfcacheId} className="mx-auto min-h-screen w-full max-w-md">{children}</div>;
+  return <div key={bfcacheId} className="min-h-screen w-full">{children}</div>;
 }

@@ -184,7 +184,7 @@ export default function ExpenseList() {
   const slide = dir === "right" ? "anim-from-right" : dir === "left" ? "anim-from-left" : "anim-fade";
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col md:max-w-6xl">
       {flash && (
         <Toast
           text={flash.text}
@@ -195,17 +195,21 @@ export default function ExpenseList() {
         />
       )}
 
-      <div className="flex flex-1 flex-col gap-6 px-5 pb-36 pt-[max(24px,env(safe-area-inset-top))]">
+      <div className="flex flex-1 flex-col gap-6 px-5 pb-36 pt-[max(24px,env(safe-area-inset-top))] md:px-10 md:pb-16 md:pt-10 lg:px-12">
         <header className="flex items-center justify-between">
-          <h1 className="text-[30px] font-semibold tracking-[-0.03em]">Expenses</h1>
+          <h1 className="text-[30px] font-semibold tracking-[-0.03em] md:text-[36px]">Expenses</h1>
           <div className="flex gap-2">
+            <Link href="/scan"
+              className="tap hidden h-11 items-center gap-2 rounded-full bg-fg pl-4 pr-5 text-[15px] font-semibold text-bg md:flex">
+              <Icon d={ICONS.camera} size={20} stroke={1.9} /> Scan receipt
+            </Link>
             <ThemeToggle />
             <RoundButton icon={ICONS.logout} aria-label="Log out" onClick={logout} />
           </div>
         </header>
 
         {/* Month picker */}
-        <nav aria-label="Choose month" className="-mt-2 flex items-center justify-between rounded-full bg-surface p-1">
+        <nav aria-label="Choose month" className="-mt-2 flex items-center justify-between rounded-full bg-surface p-1 md:mt-0 md:max-w-[380px]">
           <button type="button" onClick={() => goMonth(-1)} disabled={month <= earliest}
             aria-label={`Previous month, ${ymLabel(shiftYm(month, -1), { month: "long", year: "numeric" })}`}
             className="tap flex h-10 w-10 items-center justify-center rounded-full disabled:opacity-25">
@@ -233,8 +237,9 @@ export default function ExpenseList() {
               className="tap mt-4 h-11 rounded-full bg-surface2 px-4 text-[15px] font-medium">Try again</button>
           </div>
         ) : (
-          <div key={month} className={`flex flex-col gap-6 ${slide}`}>
-            <section aria-label={`Spending in ${monthLong}`}>
+          // Phone: one column. Tablet/desktop: summary + tiles on the left, the list on the right.
+          <div key={month} className={`flex flex-col gap-6 md:grid md:grid-cols-[minmax(0,380px)_minmax(0,1fr)] md:grid-rows-[auto_1fr] md:items-start md:gap-x-8 lg:gap-x-12 ${slide}`}>
+            <section aria-label={`Spending in ${monthLong}`} className="md:col-start-1 md:row-start-1">
               <p className="text-sm text-muted">{isThisMonth ? "Spent this month" : `Spent in ${monthLong}`}</p>
               <p className="mt-1.5 text-[56px] font-semibold leading-none tracking-[-0.05em] tabular-nums">
                 <span className="mr-0.5 align-[18px] text-[28px] font-medium tracking-normal">฿</span>{main}
@@ -253,7 +258,7 @@ export default function ExpenseList() {
             </section>
 
             {view.inMonth.length === 0 ? (
-              <section className="rounded-3xl bg-surface p-5">
+              <section className="rounded-3xl bg-surface p-5 md:col-start-2 md:row-span-2 md:row-start-1 md:p-8">
                 <div aria-hidden="true" className="mb-4 flex gap-1.5">
                   <span className="h-9 w-9 rounded-xl bg-[#22D27F]" />
                   <span className="h-9 w-9 rounded-xl bg-[#0EB6F2]" />
@@ -272,7 +277,7 @@ export default function ExpenseList() {
               </section>
             ) : (
               <>
-                <div className="grid grid-cols-[1.2fr_1fr] gap-2" style={{ gridTemplateRows: view.rows }}>
+                <div className="grid grid-cols-[1.2fr_1fr] gap-2 md:col-start-1 md:row-start-2" style={{ gridTemplateRows: view.rows }}>
                   {view.tiles.map((t, i) => (
                     <button
                       key={t.key}
@@ -290,7 +295,7 @@ export default function ExpenseList() {
                   ))}
                 </div>
 
-                <section className="relative pt-5" aria-labelledby="list-title">
+                <section className="relative pt-5 md:col-start-2 md:row-span-2 md:row-start-1" aria-labelledby="list-title">
                   <div aria-hidden="true" className="absolute inset-x-7 top-0 h-20 rounded-[22px] bg-[#FFB34F]" />
                   <div aria-hidden="true" className="absolute inset-x-3.5 top-[7px] h-20 rounded-[22px] bg-[#C38BFA]" />
                   <div aria-hidden="true" className="absolute inset-x-0 top-3.5 h-20 rounded-[22px] bg-[#0EB6F2]" />
@@ -342,7 +347,7 @@ export default function ExpenseList() {
         )}
       </div>
 
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center pb-[max(28px,env(safe-area-inset-bottom))]">
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center pb-[max(28px,env(safe-area-inset-bottom))] md:hidden">
         <Link href="/scan"
           className="tap pointer-events-auto flex h-[60px] items-center gap-2.5 rounded-full bg-fg pl-[22px] pr-7 text-base font-semibold text-bg shadow-[0_12px_32px_rgba(0,0,0,0.28)]">
           <Icon d={ICONS.camera} size={22} stroke={1.9} />
