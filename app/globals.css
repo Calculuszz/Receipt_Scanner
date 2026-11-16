@@ -17,6 +17,12 @@
   --warn-bg: #fff0d2;
   --warn-text: #734600;
   --ok: #057040;
+  /* Folder layers when a category is focused, and tiles that are not focused */
+  --fold-1: #d2d2cc;
+  --fold-2: #dbdbd6;
+  --fold-3: #e4e4df;
+  --tile-off: #e6e6e1;
+  --tile-off-text: #6e6e74;
 }
 
 /* Dark theme */
@@ -33,6 +39,11 @@
   --warn-bg: #33270f;
   --warn-text: #ffc66b;
   --ok: #22d27f;
+  --fold-1: #2b2b2f;
+  --fold-2: #35353a;
+  --fold-3: #404046;
+  --tile-off: #232326;
+  --tile-off-text: #8e8e94;
 }
 
 @theme inline {
@@ -108,6 +119,13 @@ button:disabled { cursor: not-allowed; }
 .anim-dim { animation: rs-dim 0.3s ease-out both; }
 .anim-toast { animation: rs-toast 0.5s cubic-bezier(0.32, 0.72, 0, 1) both; }
 .anim-flash { animation: rs-flash 1.6s ease-out both; }
+.anim-grow { animation: rs-grow 0.55s cubic-bezier(0.32, 0.72, 0, 1) both; transform-origin: 50% 100%; }
+.anim-lift { animation: rs-lift 0.5s cubic-bezier(0.34, 1.4, 0.5, 1) both; }
+.anim-pop { animation: rs-pop 0.3s cubic-bezier(0.32, 0.72, 0, 1) both; }
+@keyframes rs-grow { from { transform: scaleY(0); } to { transform: none; } }
+@keyframes rs-lift { from { transform: translateY(16px); } to { transform: none; } }
+@keyframes rs-pop { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.ease-ios { transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1); }
 .anim-from-right { animation: rs-from-right 0.42s cubic-bezier(0.32, 0.72, 0, 1) both; }
 .anim-from-left { animation: rs-from-left 0.42s cubic-bezier(0.32, 0.72, 0, 1) both; }
 @keyframes rs-from-right { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
