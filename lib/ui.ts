@@ -33,6 +33,8 @@ export const ICONS = {
   download: "M12 4v11 M7.5 10.5 12 15l4.5-4.5 M4 19.5h16",
   pencil: "M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4",
   flag: "M5 21V4 M5 4h11l-2 4 2 4H5",
+  shield: "M12 3 4.5 6v5.5c0 4.6 3.2 8.3 7.5 9.5 4.3-1.2 7.5-4.9 7.5-9.5V6z M9 12l2 2 4-4",
+  search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z M20 20l-4-4",
 } as const;
 
 type CategoryStyle = { color: string; icon: string; short: string };

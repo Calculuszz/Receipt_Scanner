@@ -19,6 +19,15 @@ const labels: Partial<Record<Phase, string>> = {
   saving: "Saving all receipts…", cancelling: "Removing unsaved file…",
 };
 const rowInput = "min-w-0 flex-1 bg-transparent text-right text-[15px] text-fg outline-none placeholder:text-muted";
+type EventOption = { id: string; name: string; starts_on: string | null; ends_on: string | null };
+
+/** The event whose start/end dates include this receipt date (only when exactly one does). */
+function suggestEvent(events: EventOption[], date: string): string {
+  if (!date) return "";
+  const hits = events.filter((e) => (e.starts_on || e.ends_on) && (!e.starts_on || e.starts_on <= date) && (!e.ends_on || date <= e.ends_on));
+  return hits.length === 1 ? hits[0].id : "";
+}
+
 const secondary = "tap flex h-12 items-center justify-center gap-2 rounded-2xl bg-surface px-4 text-[15px] font-medium disabled:opacity-50";
 
 function toDraft(receipt?: ScannedReceipt, categories: Category[] = []): ReceiptDraft {
@@ -27,6 +36,7 @@ function toDraft(receipt?: ScannedReceipt, categories: Category[] = []): Receipt
   return {
     id: crypto.randomUUID(), shopName: receipt?.shop_name ?? "", date: receipt?.receipt_date ?? "",
     total: receipt?.total?.toString() ?? "", currency: receipt?.currency ?? null, confirmedThb: false,
+    currencyInferred: receipt?.currency_inferred ?? false, eventId: "",
     categoryId: category?.id ?? "", note: "", sourcePages: receipt?.source_pages ?? [], confidence: receipt?.confidence ?? null,
   };
 }
@@ -94,8 +104,7 @@ function ScanScreen() {
   const [drafts, setDrafts] = useState<ReceiptDraft[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   // Which club event this batch is for (optional), and whether the saver is the treasurer.
-  const [events, setEvents] = useState<{ id: string; name: string }[]>([]);
-  const [eventId, setEventId] = useState("");
+  const [events, setEvents] = useState<EventOption[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -258,10 +267,13 @@ function ScanScreen() {
     const items: Category[] = available ?? [];
     setCategories(items);
     const [{ data: evs }, { data: role }] = await Promise.all([
-      supabase.from("events").select("id, name").eq("archived", false).order("created_at", { ascending: false }),
+      supabase.from("events").select("id, name, starts_on, ends_on").eq("archived", false).order("created_at", { ascending: false }),
       supabase.from("club_roles").select("role").eq("user_id", user.id).maybeSingle(),
     ]);
-    setEvents(evs ?? []);
+    const options: EventOption[] = evs ?? [];
+    setEvents(options);
+    // Pre-pick the event whose dates cover each receipt's date; the member can change it.
+    setDrafts((list) => list.map((d) => ({ ...d, eventId: d.eventId || suggestEvent(options, d.date) })));
     setIsAdmin(role?.role === "admin");
     const newDrafts = result.receipts.map((receipt) => toDraft(receipt, items));
     setDrafts(newDrafts);
@@ -337,7 +349,7 @@ function ScanScreen() {
           } else resolved.push(d);
         }
         if (known !== categories) setCategories(known);
-        const rows = buildReceiptBatch(resolved, user.id, source.current.path, eventId || null);
+        const rows = buildReceiptBatch(resolved, user.id, source.current.path);
         if (rows.some((row) => row.category_id && !known.some((category) => category.id === row.category_id))) throw new Error("Please select a valid category.");
         pending.current = { userId: user.id, rows }; setFrozen(true);
       }
@@ -535,6 +547,15 @@ function ScanScreen() {
                           onChange={(event) => setOtherNames((m) => ({ ...m, [draft.id]: event.target.value }))} />
                       </label>
                     )}
+                    <label className="flex min-h-[52px] items-center gap-3 border-b border-line">
+                      <span className="w-[72px] shrink-0 text-[15px]">Event</span>
+                      <select className={rowInput} value={draft.eventId ?? ""} disabled={frozen}
+                        aria-label={`Which event receipt ${index + 1} was for`}
+                        onChange={(event) => update(draft.id, { eventId: event.target.value })}>
+                        <option value="">{events.length ? "No event" : "No events yet"}</option>
+                        {events.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                      </select>
+                    </label>
                     <label className="flex min-h-[52px] items-center gap-3">
                       <span className="w-[72px] shrink-0 text-[15px]">Note</span>
                       <input className={rowInput} value={draft.note} placeholder="Add a note" onChange={(event) => update(draft.id, { note: event.target.value })} />
@@ -542,7 +563,20 @@ function ScanScreen() {
                   </div>
 
                   {draft.currency && draft.currency !== "THB" ? (
-                    <p role="alert" className="rounded-2xl bg-surface p-4 text-sm text-danger">This receipt isn&apos;t in Thai baht ({draft.currency}). Remove it to save the others.</p>
+                    <div role="alert" className="rounded-2xl bg-surface p-4 text-sm">
+                      <p className="text-danger">The AI read this receipt as <b>{draft.currency}</b>, not baht. We can only save baht amounts.</p>
+                      <p className="mt-1 text-muted">If the receipt is really in baht, the AI misread it.</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button type="button" disabled={frozen} onClick={() => update(draft.id, { currency: "THB", confirmedThb: true, currencyInferred: false })}
+                          className="tap h-10 rounded-full bg-fg px-4 text-[14px] font-semibold text-bg">It&apos;s in baht</button>
+                        {drafts.length > 1 && (
+                          <button type="button" disabled={frozen} onClick={() => setDrafts((items) => items.filter((item) => item.id !== draft.id))}
+                            className="tap h-10 rounded-full bg-surface2 px-4 text-[14px] font-medium text-danger">Remove it</button>
+                        )}
+                      </div>
+                    </div>
+                  ) : draft.currency === "THB" && draft.currencyInferred ? (
+                    <p className="rounded-2xl bg-surface px-4 py-3 text-[13px] text-muted">No currency is printed, but it&apos;s a Thai receipt, so we read it as baht.</p>
                   ) : !draft.currency && (
                     <label className="flex items-center gap-3 rounded-2xl bg-surface px-4 py-3 text-sm">
                       <input type="checkbox" required checked={draft.confirmedThb} onChange={(event) => update(draft.id, { confirmedThb: event.target.checked })} className="h-5 w-5 shrink-0 accent-[#22D27F]" />
@@ -561,17 +595,6 @@ function ScanScreen() {
             <button type="button" className={secondary} disabled={busy || frozen} onClick={() => setDrafts((items) => [...items, toDraft()])}>
               + Add a receipt we missed
             </button>
-            {events.length > 0 && (
-              <label className="field-card flex min-h-[52px] items-center gap-3 rounded-[20px] bg-surface px-4">
-                <span className="shrink-0 text-[15px]">Event</span>
-                <select value={eventId} onChange={(e) => setEventId(e.target.value)} disabled={busy || frozen}
-                  aria-label="Which event these receipts are for"
-                  className="min-w-0 flex-1 bg-transparent text-right text-[15px] outline-none">
-                  <option value="">No event</option>
-                  {events.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-                </select>
-              </label>
-            )}
             {!isAdmin && (
               <p className="mx-1 text-[13px] text-muted">After you save, the treasurer checks it. You&apos;ll get a notification if they approve it or send it back.</p>
             )}

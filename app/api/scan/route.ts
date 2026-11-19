@@ -30,7 +30,11 @@ export async function POST(request: Request) {
         `Extract ALL distinct shop receipts in this image or PDF in source order. Receipts may be Thai or English.
 Return an object with a receipts array. Return [] if there are no receipts. Each entry is one receipt, not a line item.
 A page may have zero, one or several receipts. Combine pages that belong to one receipt. Never invent entries to match a page count.
-Extract shop_name, receipt_date (YYYY-MM-DD; subtract 543 from Buddhist Era years), total (final amount paid after VAT and discounts), currency (actually printed; do not assume THB or convert currencies), category, confidence and source_pages (one-based page numbers; [] if unknown).
+Extract shop_name, receipt_date (YYYY-MM-DD; subtract 543 from Buddhist Era years), total (final amount paid after VAT and discounts), currency, currency_inferred, category, confidence and source_pages (one-based page numbers; [] if unknown).
+Currency: answer an ISO 4217 code, never a symbol. Thai baht is printed as ฿, บาท, บ., Baht, Bht or THB: all of these are "THB".
+If a currency is printed, use it and set currency_inferred false. Never convert amounts between currencies.
+If no currency is printed but the receipt is clearly Thai (Thai text, a Thai tax ID or address, PromptPay), answer "THB" with currency_inferred true.
+Otherwise use null. A "$" alone on a Thai receipt is not proof of USD: check the language and address first.
 Use null for unreadable fields. Categories: ${RECEIPT_CATEGORIES.join(", ")}.`,
       ],
       config: {
@@ -44,11 +48,12 @@ Use null for unreadable fields. Categories: ${RECEIPT_CATEGORIES.join(", ")}.`,
                 receipt_date: { type: Type.STRING, nullable: true },
                 total: { type: Type.NUMBER, nullable: true },
                 currency: { type: Type.STRING, nullable: true },
+                currency_inferred: { type: Type.BOOLEAN },
                 category: { type: Type.STRING, nullable: true, enum: RECEIPT_CATEGORIES },
                 confidence: { type: Type.NUMBER, nullable: true },
                 source_pages: { type: Type.ARRAY, items: { type: Type.INTEGER } },
               },
-              required: ["shop_name", "receipt_date", "total", "currency", "category", "confidence", "source_pages"],
+              required: ["shop_name", "receipt_date", "total", "currency", "currency_inferred", "category", "confidence", "source_pages"],
             } },
           },
         },

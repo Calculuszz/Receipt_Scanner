@@ -1,6 +1,6 @@
 "use client";
 // Top bar shared by the main pages: title, notification bell, theme, log out,
-// and (for the treasurer / viewers) tabs between My receipts, Review, Club and Reports.
+// and (for admins) tabs between My receipts, Review, Club, Reports and Members.
 // It also keeps the unread count live with Supabase Realtime and pops a toast for new notifications.
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import Link from "next/link";
@@ -26,8 +26,9 @@ type Tab = { href: string; label: string; icon: string; show: (me: Me) => boolea
 const TABS: Tab[] = [
   { href: "/", label: "My receipts", icon: ICONS.home, show: () => true },
   { href: "/review", label: "Review", icon: ICONS.inbox, show: (me) => me.admin, badge: "pending" },
-  { href: "/club", label: "Club", icon: ICONS.users, show: (me) => me.seesClub },
-  { href: "/reports", label: "Reports", icon: ICONS.chart, show: (me) => me.seesClub },
+  { href: "/club", label: "Club", icon: ICONS.users, show: (me) => me.admin },
+  { href: "/reports", label: "Reports", icon: ICONS.chart, show: (me) => me.admin },
+  { href: "/members", label: "Members", icon: ICONS.shield, show: (me) => me.admin },
 ];
 
 export default function AppShell({ title, children }: { title: string; children: React.ReactNode }) {
