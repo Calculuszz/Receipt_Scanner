@@ -1,5 +1,5 @@
 "use client";
-// Reports for the treasurer and viewers: events with budgets, where the money went, and CSV export.
+// Reports for admins: events with budgets, where the money went, and CSV export.
 // Spending counts every receipt that wasn't sent back (checking, approved and paid).
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase-browser";

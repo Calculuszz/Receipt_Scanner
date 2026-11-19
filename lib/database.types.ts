@@ -224,7 +224,19 @@ export type Database = {
     }
     Functions: {
       can_see_club: { Args: never; Returns: boolean }
+      club_members: {
+        Args: never
+        Returns: {
+          display_name: string
+          email: string
+          id: string
+          is_admin: boolean
+          joined_at: string
+          receipts: number
+        }[]
+      }
       is_admin: { Args: never; Returns: boolean }
+      set_admin: { Args: { make_admin: boolean; target: string }; Returns: undefined }
     }
     Enums: {
       [_ in never]: never

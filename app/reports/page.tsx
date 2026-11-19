@@ -8,7 +8,7 @@ export default function ReportsPage() {
   return (
     <AuthGuard>
       <AppShell title="Reports">
-        <RoleGate need="club">
+        <RoleGate need="admin">
           <Reports />
         </RoleGate>
       </AppShell>

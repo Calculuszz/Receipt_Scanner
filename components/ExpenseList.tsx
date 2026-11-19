@@ -139,11 +139,11 @@ function Folder({ color, tab, className = "", style, children, bodyClass = "" }:
   );
 }
 
-/** mode "mine": your own receipts. mode "club": everyone's (treasurer and viewers; RLS enforces it). */
+/** mode "mine": your own receipts. mode "club": everyone's (admins only; RLS enforces it). */
 export default function ExpenseList({ mode = "mine" }: { mode?: "mine" | "club" }) {
   const router = useRouter();
   const { me } = useShell();
-  const club = mode === "club" && me.seesClub;
+  const club = mode === "club" && me.admin;
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [categories, setCategories] = useState<Record<string, CategoryInfo>>({});
   const [loading, setLoading] = useState(true);
@@ -167,7 +167,7 @@ export default function ExpenseList({ mode = "mine" }: { mode?: "mine" | "club" 
 
   const load = useCallback(async () => {
     try {
-      // RLS lets the treasurer and viewers read everyone's rows, so "mine" must filter by user explicitly.
+      // RLS lets admins read everyone's rows, so "mine" must filter by user explicitly.
       let q = supabase.from("receipts").select("*");
       if (!club) q = q.eq("user_id", me.id);
       const [r, c, p, e] = await Promise.all([

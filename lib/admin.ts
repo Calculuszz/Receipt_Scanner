@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Profile, ReceiptStatus } from "@/lib/types";
 
-/** member: sends receipts. admin: the treasurer, reviews and pays back. viewer: president / advisor, reads everything. */
-export type Role = "member" | "admin" | "viewer";
-export type Me = { id: string; role: Role; admin: boolean; seesClub: boolean };
+/** member: sends receipts. admin: the treasurer (there can be several); reviews, pays back, manages admins. */
+export type Role = "member" | "admin";
+export type Me = { id: string; role: Role; admin: boolean };
 
 /**
  * Who is signed in, and what is their club role?
@@ -13,8 +13,8 @@ export async function loadMe(client: SupabaseClient): Promise<Me | null> {
   const { data: { user } } = await client.auth.getUser();
   if (!user) return null;
   const { data } = await client.from("club_roles").select("role").eq("user_id", user.id).maybeSingle();
-  const role: Role = data?.role === "admin" || data?.role === "viewer" ? data.role : "member";
-  return { id: user.id, role, admin: role === "admin", seesClub: role !== "member" };
+  const role: Role = data?.role === "admin" ? "admin" : "member";
+  return { id: user.id, role, admin: role === "admin" };
 }
 
 /** A short, friendly name for a member: display name, else the part of the email before @. */

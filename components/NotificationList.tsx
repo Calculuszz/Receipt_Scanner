@@ -14,6 +14,7 @@ const KIND: Record<string, { icon: string; color: string }> = {
   approved: { icon: ICONS.check, color: "#0EB6F2" },
   paid: { icon: ICONS.check, color: "var(--ok)" },
   over_budget: { icon: ICONS.flag, color: "var(--danger)" },
+  role: { icon: ICONS.shield, color: "#0EB6F2" },
 };
 
 function ago(ts: string) {
