@@ -584,8 +584,8 @@ export default function ExpenseList({ mode = "mine" }: { mode?: "mine" | "club" 
                 <div className={focus ? "pt-9" : "pt-2"}>
                   {receipts.length === 0 ? (
                     <div className="px-3 pb-5 pt-2">
-                      <p className="text-[15px] font-medium">Scan your first receipt</p>
-                      <p className="mt-1 text-sm text-muted">Take a photo and we&apos;ll fill in the shop, date and total for you.</p>
+                      <p className="text-[15px] font-medium">{me.active ? "Scan your first receipt" : "No receipts"}</p>
+                      <p className="mt-1 text-sm text-muted">{me.active ? "Take a photo and we'll fill in the shop, date and total for you." : "You didn't send any receipts while you were a member."}</p>
                     </div>
                   ) : groups.length === 0 ? (
                     <p className="px-3 pb-5 pt-2 text-[15px] text-muted">No receipts in this period. Try a longer range.</p>
@@ -635,8 +635,8 @@ export default function ExpenseList({ mode = "mine" }: { mode?: "mine" | "club" 
         )}
       </div>
 
-      {/* Phone: floating Scan button that shrinks to an icon while scrolling */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center pb-[max(28px,env(safe-area-inset-bottom))] md:hidden">
+      {/* Phone: floating Scan button that shrinks to an icon while scrolling (active members only) */}
+      <div hidden={!me.active} className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center pb-[max(28px,env(safe-area-inset-bottom))] md:hidden">
         <Link href="/scan" aria-label="Scan receipt"
           className="tap ease-ios pointer-events-auto flex h-[60px] items-center justify-center overflow-hidden whitespace-nowrap rounded-full bg-fg font-semibold text-bg shadow-[0_12px_32px_rgba(0,0,0,0.28)] transition-[width] duration-[400ms]"
           style={{ width: compact ? 60 : 186 }}>

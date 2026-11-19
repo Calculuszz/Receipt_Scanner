@@ -10,6 +10,9 @@ export async function POST(request: Request) {
     const supabase = await createClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) return Response.json({ error: "Please log in before scanning." }, { status: 401 });
+    // Every scan costs Gemini money: only people the club has let in may use it.
+    const { data: active } = await supabase.rpc("is_active_member");
+    if (active !== true) return Response.json({ error: "Only club members can scan. Wait for a club admin to let you in." }, { status: 403 });
     let body: unknown;
     try { body = await request.json(); }
     catch { return Response.json({ error: "Send JSON containing imagePath." }, { status: 400 }); }

@@ -231,7 +231,7 @@ export default function ReceiptDetail() {
   const mine = me?.id === receipt.user_id;
   const open = status === "pending" || status === "rejected";
   // Members edit only while it's being checked or was sent back; the treasurer may edit their own any time.
-  const canEdit = mine && (open || !!me?.admin);
+  const canEdit = mine && !!me?.active && (open || !!me?.admin);
   const reviewer = !!me?.admin && !mine;
   const event = events.find((e) => e.id === receipt.event_id);
 
