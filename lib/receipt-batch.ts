@@ -6,7 +6,7 @@ export type ReceiptDraft = {
   sourcePages: number[]; confidence: number | null;
 };
 
-export function buildReceiptBatch(drafts: ReceiptDraft[], userId: string, imagePath: string) {
+export function buildReceiptBatch(drafts: ReceiptDraft[], userId: string, imagePath: string, eventId: string | null = null) {
   if (!drafts.length) throw new Error("Add at least one receipt before saving.");
   if (new Set(drafts.map((row) => row.id)).size !== drafts.length) throw new Error("Duplicate receipt IDs.");
   return drafts.map((draft, index) => {
@@ -20,6 +20,7 @@ export function buildReceiptBatch(drafts: ReceiptDraft[], userId: string, imageP
       id: draft.id, user_id: userId, shop_name: draft.shopName.trim() || null,
       receipt_date: draft.date || null, total, currency: "THB", category_id: draft.categoryId || null,
       image_path: imagePath, note: draft.note.trim() || null, ai_confidence: draft.confidence,
+      event_id: eventId,
     };
   });
 }

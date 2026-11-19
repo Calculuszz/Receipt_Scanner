@@ -6,7 +6,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeDocument, scanWarning, type ScannedReceipt } from "@/lib/receipt-validation";
 import { buildReceiptBatch, saveReceiptBatch, type ReceiptBatch, type ReceiptDraft } from "@/lib/receipt-batch";
-import { prepareReceiptFile } from "@/lib/receipt-file";
+import { prepareReceiptFile, RECEIPT_ACCEPT } from "@/lib/receipt-file";
 import { ICONS, categoryForOther, isDefaultOther, longDate, money, setFlash, todayIso } from "@/lib/ui";
 import { Icon, Spinner } from "@/components/ui";
 import AuthGuard from "@/components/AuthGuard";
@@ -53,10 +53,11 @@ function PdfReceiptPreview({ url, sourcePages, index }: { url: string; sourcePag
 type Client = ReturnType<typeof createClient>;
 
 /** Draft id → "already saved?" hint, matched on the same total and date. */
-async function findDuplicates(supabase: Client, drafts: ReceiptDraft[]): Promise<Record<string, string>> {
+async function findDuplicates(supabase: Client, userId: string, drafts: ReceiptDraft[]): Promise<Record<string, string>> {
   const totals = [...new Set(drafts.map((d) => Number(d.total)).filter((n) => n > 0))];
   if (!totals.length) return {};
-  const { data } = await supabase.from("receipts").select("shop_name, receipt_date, total, created_at").in("total", totals).limit(50);
+  // Own receipts only: admins can read everyone's, and another member's purchase isn't a duplicate of yours.
+  const { data } = await supabase.from("receipts").select("shop_name, receipt_date, total, created_at").eq("user_id", userId).in("total", totals).limit(50);
   const out: Record<string, string> = {};
   for (const d of drafts) {
     const hit = (data ?? []).find((r) => Number(r.total) === Number(d.total) && (r.receipt_date ?? "") === (d.date ?? ""));
@@ -89,8 +90,13 @@ function ScanScreen() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [prepNote, setPrepNote] = useState("");
   const [drafts, setDrafts] = useState<ReceiptDraft[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  // Which club event this batch is for (optional), and whether the saver is the treasurer.
+  const [events, setEvents] = useState<{ id: string; name: string }[]>([]);
+  const [eventId, setEventId] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [frozen, setFrozen] = useState(false);
@@ -222,7 +228,10 @@ function ScanScreen() {
 
   async function scan(selected: File) {
     setPhase("preparing");
-    const prepared = await prepareReceiptFile(selected);
+    const prepared = await prepareReceiptFile(selected, setPrepNote);
+    setPrepNote("");
+    // HEIC can't be shown by <img> in Chrome/Edge, so preview the converted JPEG instead.
+    if (prepared.extension === "jpg") setPreview(URL.createObjectURL(prepared.blob));
     const { supabase, user } = await currentUser();
     if (source.current && source.current.userId !== user.id) throw new Error("Your account changed. Use the original account to cancel this scan.");
     if (!source.current) {
@@ -244,13 +253,20 @@ function ScanScreen() {
       throw new Error(typeof payload?.error === "string" ? payload.error : "Could not scan this file. Please retry.");
     }
     const result = normalizeDocument(payload);
-    const { data: available, error: categoryError } = await supabase.from("categories").select("id, name, user_id").order("name");
+    const { data: available, error: categoryError } = await supabase.from("categories").select("id, name, user_id")
+      .or(`user_id.is.null,user_id.eq.${user.id}`).order("name");
     const items: Category[] = available ?? [];
     setCategories(items);
+    const [{ data: evs }, { data: role }] = await Promise.all([
+      supabase.from("events").select("id, name").eq("archived", false).order("created_at", { ascending: false }),
+      supabase.from("club_roles").select("role").eq("user_id", user.id).maybeSingle(),
+    ]);
+    setEvents(evs ?? []);
+    setIsAdmin(role?.role === "admin");
     const newDrafts = result.receipts.map((receipt) => toDraft(receipt, items));
     setDrafts(newDrafts);
     setOtherNames({});
-    setDupes(await findDuplicates(supabase, newDrafts));
+    setDupes(await findDuplicates(supabase, user.id, newDrafts));
     setScanComplete(true);
     setNotice(categoryError ? "Categories could not be loaded. You can save without one." : "");
     setPhase("reviewing");
@@ -271,7 +287,7 @@ function ScanScreen() {
       let message = err instanceof Error ? err.message : "Could not scan this file.";
       try { await removeUnsavedSource(); }
       catch (cleanupError) { message += ` ${cleanupError instanceof Error ? cleanupError.message : "Cleanup failed. Retry Cancel."}`; }
-      setScanComplete(false); setDrafts([]); setError(message); setPhase("idle");
+      setScanComplete(false); setDrafts([]); setError(message); setPrepNote(""); setPhase("idle");
     } finally { lock.current = false; }
   }
 
@@ -321,7 +337,7 @@ function ScanScreen() {
           } else resolved.push(d);
         }
         if (known !== categories) setCategories(known);
-        const rows = buildReceiptBatch(resolved, user.id, source.current.path);
+        const rows = buildReceiptBatch(resolved, user.id, source.current.path, eventId || null);
         if (rows.some((row) => row.category_id && !known.some((category) => category.id === row.category_id))) throw new Error("Please select a valid category.");
         pending.current = { userId: user.id, rows }; setFrozen(true);
       }
@@ -343,7 +359,10 @@ function ScanScreen() {
       source.current = null;
       const saved = pending.current?.rows ?? [];
       const count = saved.length;
-      setFlash({ text: count === 1 ? "Receipt saved" : `${count} receipts saved`, ids: saved.map((r) => r.id), scanNext: true });
+      // Members' receipts go to the treasurer to check; the treasurer's own are settled straight away.
+      const sent = isAdmin ? (count === 1 ? "Receipt saved" : `${count} receipts saved`)
+        : count === 1 ? "Sent to the treasurer to check" : `${count} receipts sent to the treasurer`;
+      setFlash({ text: sent, ids: saved.map((r) => r.id), scanNext: true });
       // Leave this page clean, so coming back starts a fresh scan.
       pending.current = null;
       setFrozen(false); setFile(null); setPreview(null); setDrafts([]); setScanComplete(false);
@@ -368,7 +387,7 @@ function ScanScreen() {
       </header>
 
       <div className="flex flex-col gap-3.5 px-5 pt-2 md:px-10">
-        <input ref={picker} aria-label="Choose receipt image or PDF" type="file" accept="image/*,application/pdf" onChange={selectFile} hidden disabled={busy || frozen} />
+        <input ref={picker} aria-label="Choose receipt image or PDF" type="file" accept={RECEIPT_ACCEPT} onChange={selectFile} hidden disabled={busy || frozen} />
 
         {/* Live camera */}
         <section hidden={!cameraOpen} aria-label="Camera" className="anim-fade overflow-hidden rounded-[28px] bg-[#050505] text-white">
@@ -419,7 +438,7 @@ function ScanScreen() {
               className="tap flex h-14 items-center justify-center gap-2.5 rounded-[18px] bg-surface text-[17px] font-medium">
               <Icon d={ICONS.upload} size={22} /> Upload photo or PDF
             </button>
-            <p className="text-center text-[13px] text-muted">JPG, PNG or PDF up to 5 MB. Scanning starts by itself.</p>
+            <p className="text-center text-[13px] text-muted">JPG, PNG, iPhone HEIC or PDF up to 5 MB. Scanning starts by itself.</p>
           </section>
         )}
 
@@ -453,7 +472,8 @@ function ScanScreen() {
           <div role="status" className="anim-rise flex items-center gap-3.5 rounded-[20px] bg-surface p-4">
             <span className="text-brand"><Spinner size={24} /></span>
             <div>
-              <p className="text-base font-medium">{labels[phase]}</p>
+              <p className="text-base font-medium">{(phase === "preparing" && prepNote) || labels[phase]}</p>
+              {phase === "preparing" && prepNote && <p className="text-[13px] text-muted">The first one takes a few seconds.</p>}
               {phase === "scanning" && <p className="text-[13px] text-muted">This takes a few seconds. Keep this screen open.</p>}
             </div>
           </div>
@@ -541,13 +561,27 @@ function ScanScreen() {
             <button type="button" className={secondary} disabled={busy || frozen} onClick={() => setDrafts((items) => [...items, toDraft()])}>
               + Add a receipt we missed
             </button>
+            {events.length > 0 && (
+              <label className="field-card flex min-h-[52px] items-center gap-3 rounded-[20px] bg-surface px-4">
+                <span className="shrink-0 text-[15px]">Event</span>
+                <select value={eventId} onChange={(e) => setEventId(e.target.value)} disabled={busy || frozen}
+                  aria-label="Which event these receipts are for"
+                  className="min-w-0 flex-1 bg-transparent text-right text-[15px] outline-none">
+                  <option value="">No event</option>
+                  {events.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
+              </label>
+            )}
+            {!isAdmin && (
+              <p className="mx-1 text-[13px] text-muted">After you save, the treasurer checks it. You&apos;ll get a notification if they approve it or send it back.</p>
+            )}
             {frozen && <p className="mx-1 text-[13px] text-muted">We&apos;re keeping this batch as it is while we check whether it saved.</p>}
 
             <div className="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-md bg-bg px-5 pb-[max(30px,env(safe-area-inset-bottom))] pt-3 md:max-w-2xl md:px-10">
               <button type="submit" disabled={busy || cameraOpen || !drafts.length}
                 className="tap flex h-14 w-full items-center justify-center gap-2.5 rounded-[18px] bg-brand text-[17px] font-semibold text-ink disabled:opacity-50">
                 {phase === "saving" && <Spinner />}
-                {frozen ? "Check status and retry" : drafts.length === 1 ? "Save receipt" : `Save ${drafts.length} receipts`}
+                {frozen ? "Check status and retry" : drafts.length === 1 ? (isAdmin ? "Save receipt" : "Send receipt") : `${isAdmin ? "Save" : "Send"} ${drafts.length} receipts`}
               </button>
             </div>
           </form>

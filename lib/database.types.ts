@@ -39,6 +39,93 @@ export type Database = {
         }
         Relationships: []
       }
+      club_roles: {
+        Row: {
+          added_at: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          added_at?: string
+          role: string
+          user_id: string
+        }
+        Update: {
+          added_at?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      events: {
+        Row: {
+          archived: boolean
+          budget: number | null
+          created_at: string
+          created_by: string | null
+          ends_on: string | null
+          id: string
+          name: string
+          starts_on: string | null
+        }
+        Insert: {
+          archived?: boolean
+          budget?: number | null
+          created_at?: string
+          created_by?: string | null
+          ends_on?: string | null
+          id?: string
+          name: string
+          starts_on?: string | null
+        }
+        Update: {
+          archived?: boolean
+          budget?: number | null
+          created_at?: string
+          created_by?: string | null
+          ends_on?: string | null
+          id?: string
+          name?: string
+          starts_on?: string | null
+        }
+        Relationships: []
+      }
+      notifications: {
+        Row: {
+          body: string | null
+          created_at: string
+          event_id: string | null
+          id: string
+          kind: string
+          read_at: string | null
+          receipt_id: string | null
+          title: string
+          user_id: string
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          event_id?: string | null
+          id?: string
+          kind: string
+          read_at?: string | null
+          receipt_id?: string | null
+          title: string
+          user_id: string
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          event_id?: string | null
+          id?: string
+          kind?: string
+          read_at?: string | null
+          receipt_id?: string | null
+          title?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -74,6 +161,12 @@ export type Database = {
           total: number
           updated_at: string
           user_id: string
+          event_id: string | null
+          paid_at: string | null
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
         }
         Insert: {
           ai_confidence?: number | null
@@ -88,6 +181,12 @@ export type Database = {
           total: number
           updated_at?: string
           user_id?: string
+          event_id?: string | null
+          paid_at?: string | null
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
         }
         Update: {
           ai_confidence?: number | null
@@ -102,6 +201,12 @@ export type Database = {
           total?: number
           updated_at?: string
           user_id?: string
+          event_id?: string | null
+          paid_at?: string | null
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
         }
         Relationships: [
           {
@@ -118,7 +223,8 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      can_see_club: { Args: never; Returns: boolean }
+      is_admin: { Args: never; Returns: boolean }
     }
     Enums: {
       [_ in never]: never

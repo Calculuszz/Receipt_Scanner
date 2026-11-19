@@ -7,6 +7,9 @@ import { validDate } from "@/lib/receipt-validation";
 import { RECEIPTS_BUCKET, type Receipt } from "@/lib/types";
 import { ICONS, categoryForOther, categoryStyle, isDefaultOther, longDate, moneyParts, scanCheck, setFlash, todayIso } from "@/lib/ui";
 import { Icon, Spinner, Toast } from "@/components/ui";
+import { STATUS, asStatus, loadMe, memberName, type Me } from "@/lib/admin";
+import { SendBackSheet } from "@/components/ReviewQueue";
+import type { ClubEvent } from "@/lib/types";
 
 type CategoryInfo = { id: string; name: string; color: string; user_id: string | null };
 
@@ -39,6 +42,12 @@ export default function ReceiptDetail() {
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState("");
 
+  const [me, setMe] = useState<Me | null>(null);
+  const [ownerName, setOwnerName] = useState("");
+  const [events, setEvents] = useState<ClubEvent[]>([]);
+  const [editEvent, setEditEvent] = useState("");
+  const [reviewing, setReviewing] = useState(false);
+  const [sendBack, setSendBack] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editCat, setEditCat] = useState("");
   const [otherName, setOtherName] = useState("");
@@ -60,9 +69,11 @@ export default function ReceiptDetail() {
         return;
       }
       try {
-        const [r, c] = await Promise.all([
+        const [r, c, who, ev] = await Promise.all([
           supabase.from("receipts").select("*").eq("id", id).maybeSingle(),
           supabase.from("categories").select("id, name, color, user_id").order("name"),
+          loadMe(supabase),
+          supabase.from("events").select("*").order("created_at", { ascending: false }),
         ]);
         if (cancelled) return;
         if (r.error) {
@@ -75,7 +86,15 @@ export default function ReceiptDetail() {
           return;
         }
         setReceipt(r.data);
-        setCategories(c.data ?? []);
+        // Admins can read every member's categories; only offer the defaults plus the owner's own.
+        setCategories((c.data ?? []).filter((cat) => cat.user_id === null || cat.user_id === r.data.user_id));
+        setMe(who);
+        setEvents((ev.data ?? []) as ClubEvent[]);
+        if (who?.id !== r.data.user_id) {
+          const { data: owner } = await supabase.from("profiles").select("display_name, email").eq("id", r.data.user_id).maybeSingle();
+          if (cancelled) return;
+          setOwnerName(memberName(owner ?? undefined));
+        }
 
         if (r.data.image_path) {
           const { data, error } = await supabase.storage.from(RECEIPTS_BUCKET).createSignedUrl(r.data.image_path, SIGNED_URL_SECONDS);
@@ -96,6 +115,7 @@ export default function ReceiptDetail() {
   function startEdit() {
     if (!receipt) return;
     setEditCat(receipt.category_id ?? "");
+    setEditEvent(receipt.event_id ?? "");
     setOtherName("");
     setFormError("");
     setConfirmDelete(false);
@@ -139,17 +159,33 @@ export default function ReceiptDetail() {
         total: Math.round(total * 100) / 100,
         category_id: categoryId || null,
         note: note || null,
+        event_id: editEvent || null,
       })
       .eq("id", receipt.id)
       .select()
       .maybeSingle();
     setSaving(false);
 
-    if (error) return setFormError("Couldn't save your changes. Try again.");
+    // The database explains locks ("already approved..."), so show its message when there is one.
+    if (error) return setFormError(error.code === "42501" ? error.message : "Couldn't save your changes. Try again.");
     if (!updated) return setFormError("This receipt no longer exists. Go back to your expenses.");
+    const wasSentBack = receipt.status === "rejected";
     setReceipt(updated);
     setEditing(false);
-    setToast("Changes saved");
+    setToast(wasSentBack ? "Fixed and sent to the treasurer again" : "Changes saved");
+  }
+
+  /** Treasurer: approve, send back, mark paid, or undo paid. The trigger checks the move is allowed. */
+  async function review(status: "approved" | "rejected" | "paid", note?: string) {
+    if (!receipt || reviewing) return;
+    setReviewing(true);
+    const { data, error } = await supabase.from("receipts")
+      .update(note !== undefined ? { status, review_note: note } : { status })
+      .eq("id", receipt.id).select().maybeSingle();
+    setReviewing(false);
+    if (error || !data) { setToast(error?.message ?? "Couldn't update it. Try again."); return; }
+    setReceipt(data);
+    setToast(status === "approved" ? "Approved. They were notified." : status === "paid" ? "Marked as paid back." : `Sent back to ${ownerName || "the member"}.`);
   }
 
   async function handleDelete() {
@@ -190,6 +226,14 @@ export default function ReceiptDetail() {
   const [main, dec] = moneyParts(Number(receipt.total));
   const check = scanCheck(receipt.ai_confidence);
   const isPdf = receipt.image_path?.toLowerCase().endsWith(".pdf");
+  const status = asStatus(receipt.status);
+  const st = STATUS[status];
+  const mine = me?.id === receipt.user_id;
+  const open = status === "pending" || status === "rejected";
+  // Members edit only while it's being checked or was sent back; the treasurer may edit their own any time.
+  const canEdit = mine && (open || !!me?.admin);
+  const reviewer = !!me?.admin && !mine;
+  const event = events.find((e) => e.id === receipt.event_id);
 
   return (
     // Phone: coloured header on top. Tablet/desktop: header card on the left, details on the right.
@@ -202,7 +246,9 @@ export default function ReceiptDetail() {
           <Link href="/" aria-label="Back to expenses" className="tap flex h-11 w-11 items-center justify-center rounded-full bg-black/10">
             <Icon d={ICONS.back} stroke={2.2} />
           </Link>
-          {!editing && (
+          {!canEdit ? (
+            <span className="flex h-11 items-center rounded-full bg-black/10 px-[18px] text-[13px] font-semibold">{mine ? "Locked" : "View only"}</span>
+          ) : !editing && (
             <button type="button" onClick={startEdit} className="tap h-11 rounded-full bg-black/10 px-[18px] text-[15px] font-semibold">Edit</button>
           )}
         </div>
@@ -215,10 +261,59 @@ export default function ReceiptDetail() {
           <span className="mr-0.5 align-[16px] text-[30px] font-medium">฿</span>{main}
           <span className="text-[28px] opacity-55">{dec}</span>
         </p>
-        <p className="mt-2 text-sm text-black/70">{receipt.receipt_date ? `Paid ${longDate(receipt.receipt_date)}` : "No date on the receipt"}</p>
+        <p className="mt-2 text-sm text-black/70">
+          {receipt.receipt_date ? `Bought ${longDate(receipt.receipt_date)}` : "No date on the receipt"}
+          {!mine && ownerName ? ` · by ${ownerName}` : ""}
+        </p>
       </header>
 
       <div className="flex flex-col gap-3 px-5 pt-[18px] md:px-0 md:pt-0">
+        {/* Review status, with the treasurer's reason when it was sent back */}
+        {!editing && (
+          <section aria-label="Review status" className="anim-rise rounded-[20px] p-4" style={{ background: st.bg }}>
+            <p className="flex items-center gap-2 text-[15px] font-semibold" style={{ color: st.fg }}>
+              <span className="h-2.5 w-2.5 rounded-full" style={{ background: st.dot }} />{st.label}
+            </p>
+            {status === "rejected" && receipt.review_note && (
+              <p className="mt-2 rounded-xl bg-bg/70 px-3 py-2 text-[15px] leading-snug">“{receipt.review_note}”</p>
+            )}
+            {status === "paid" && receipt.paid_at && <p className="mt-1 text-[13px] text-muted">On {longDate(receipt.paid_at.slice(0, 10))}</p>}
+            {mine && status === "rejected" && (
+              <button type="button" onClick={startEdit}
+                className="tap mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-fg text-[15px] font-semibold text-bg">
+                <Icon d={ICONS.pencil} size={16} /> Fix it and send again
+              </button>
+            )}
+            {mine && !open && !me?.admin && (
+              <p className="mt-1 text-[13px] text-muted">It can&apos;t be changed now. Ask the treasurer if something is wrong.</p>
+            )}
+            {reviewer && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(status === "pending" || status === "approved") && (
+                  <button type="button" disabled={reviewing} onClick={() => setSendBack(true)}
+                    className="tap h-10 flex-1 rounded-2xl bg-bg/70 px-3 text-[14px] font-medium">Send back</button>
+                )}
+                {(status === "pending" || status === "rejected") && (
+                  <button type="button" disabled={reviewing} onClick={() => void review("approved")}
+                    className="tap flex h-10 flex-1 items-center justify-center gap-1.5 rounded-2xl bg-brand px-3 text-[14px] font-semibold text-ink">
+                    {reviewing ? <Spinner /> : <Icon d={ICONS.check} size={16} stroke={2.4} />} {status === "rejected" ? "Approve anyway" : "Approve"}
+                  </button>
+                )}
+                {status === "approved" && (
+                  <button type="button" disabled={reviewing} onClick={() => void review("paid")}
+                    className="tap flex h-10 flex-1 items-center justify-center gap-1.5 rounded-2xl bg-fg px-3 text-[14px] font-semibold text-bg">
+                    {reviewing && <Spinner />} Mark paid back
+                  </button>
+                )}
+                {status === "paid" && (
+                  <button type="button" disabled={reviewing} onClick={() => void review("approved")}
+                    className="tap h-10 flex-1 rounded-2xl bg-bg/70 px-3 text-[14px] font-medium">Undo paid</button>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Photo / original file */}
         {imageUrl ? (
           <a href={imageUrl} target="_blank" rel="noopener noreferrer" className="tap flex items-center gap-3.5 rounded-[20px] bg-surface p-3">
@@ -266,6 +361,16 @@ export default function ReceiptDetail() {
                   className="min-w-0 flex-1 bg-transparent text-right text-[15px] outline-none placeholder:text-muted" />
               </label>
             </div>
+            {events.some((e) => !e.archived || e.id === receipt.event_id) && (
+              <label className="field-card flex min-h-[52px] items-center gap-3 rounded-[20px] bg-surface px-4">
+                <span className="w-16 shrink-0 text-[15px]">Event</span>
+                <select value={editEvent} onChange={(e) => setEditEvent(e.target.value)}
+                  className="min-w-0 flex-1 bg-transparent text-right text-[15px] outline-none">
+                  <option value="">No event</option>
+                  {events.filter((e) => !e.archived || e.id === receipt.event_id).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
+              </label>
+            )}
             <fieldset>
               <legend className="mx-1 mb-2.5 text-[13px] text-muted">Category</legend>
               <div className="flex flex-wrap gap-2">
@@ -296,7 +401,7 @@ export default function ReceiptDetail() {
                 className="tap h-[52px] rounded-2xl bg-surface text-base font-medium">Cancel</button>
               <button type="submit" disabled={saving}
                 className="tap flex h-[52px] items-center justify-center gap-2 rounded-2xl bg-brand text-base font-semibold text-ink">
-                {saving && <Spinner />}{saving ? "Saving…" : "Save changes"}
+                {saving && <Spinner />}{saving ? "Saving…" : status === "rejected" && mine && !me?.admin ? "Save and send again" : "Save changes"}
               </button>
             </div>
           </form>
@@ -305,6 +410,7 @@ export default function ReceiptDetail() {
             <dl className="m-0 rounded-[20px] bg-surface px-4">
               <Row label="Date">{longDate(receipt.receipt_date)}</Row>
               <Row label="Category">{category?.name ?? "No category"}</Row>
+              {event && <Row label="Event">{event.name}</Row>}
               <Row label="Note" last={!check}>{receipt.note || "No note"}</Row>
               {check && (
                 <Row label="Scan check" last>
@@ -314,11 +420,15 @@ export default function ReceiptDetail() {
                 </Row>
               )}
             </dl>
-            {check && check.text !== "Read clearly" && (
+            {canEdit && check && check.text !== "Read clearly" && (
               <p className="mx-1 text-[13px] leading-snug text-muted">Check the shop, date and total against the photo. Tap Edit to fix anything.</p>
             )}
-            <button type="button" onClick={() => setConfirmDelete(true)}
-              className="tap h-[52px] rounded-2xl bg-surface text-base font-medium text-danger">Delete receipt</button>
+            {!mine ? (
+              <p className="mx-1 text-[13px] leading-snug text-muted">This receipt belongs to {ownerName || "another member"}. Only they can edit or delete it.</p>
+            ) : canEdit && (
+              <button type="button" onClick={() => setConfirmDelete(true)}
+                className="tap h-[52px] rounded-2xl bg-surface text-base font-medium text-danger">Delete receipt</button>
+            )}
             <p className="mt-1 text-center text-xs text-muted">
               Saved {formatDateTime(receipt.created_at)}
               {receipt.updated_at !== receipt.created_at ? ` · Edited ${formatDateTime(receipt.updated_at)}` : ""}
@@ -326,6 +436,11 @@ export default function ReceiptDetail() {
           </>
         )}
       </div>
+
+      {sendBack && (
+        <SendBackSheet receipt={receipt} who={ownerName || "the member"} onClose={() => setSendBack(false)}
+          onSend={async (note) => { setSendBack(false); await review("rejected", note); }} />
+      )}
 
       {/* iOS-style action sheet */}
       {confirmDelete && (

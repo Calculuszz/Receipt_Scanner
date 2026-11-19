@@ -9,6 +9,9 @@ export type ReceiptInsert = TablesInsert<"receipts">;
 export type ReceiptUpdate = TablesUpdate<"receipts">;
 export type Category = Tables<"categories">;
 export type Profile = Tables<"profiles">;
+export type ClubEvent = Tables<"events">;
+export type AppNotification = Tables<"notifications">;
+export type ReceiptStatus = "pending" | "approved" | "rejected" | "paid";
 
 // Default categories seeded in the database (user_id is null)
 export const CATEGORY_NAMES = [
