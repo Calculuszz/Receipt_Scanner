@@ -3,18 +3,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase-browser";
-import type { Receipt } from "@/lib/types";
+import type { ClubEvent, Profile, Receipt } from "@/lib/types";
+import { STATUS, asStatus, memberName } from "@/lib/admin";
+import { useShell } from "@/components/AppShell";
 import { ICONS, categoryStyle, money, moneyParts, takeFlash, type Flash } from "@/lib/ui";
-import { Icon, RoundButton, Spinner, ThemeToggle, Toast } from "@/components/ui";
+import { Icon, Spinner, Toast } from "@/components/ui";
 
 type CategoryInfo = { id: string; name: string; color: string | null };
-type Range = 1 | 3 | 6 | 12;
+type Preset = 1 | 3 | 6 | 12;
+type Range = Preset | "custom";
+type Span = { from: string; to: string };
 
 const RANGES: { v: Range; label: string; long: string }[] = [
   { v: 1, label: "1M", long: "1 month" },
   { v: 3, label: "3M", long: "3 months" },
   { v: 6, label: "6M", long: "6 months" },
   { v: 12, label: "1Y", long: "1 year" },
+  { v: "custom", label: "Custom", long: "Custom dates" },
 ];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -36,14 +41,60 @@ const mIndex = (iso: string) => Number(iso.slice(0, 4)) * 12 + Number(iso.slice(
 const dayIso = (r: Receipt) => r.receipt_date ?? r.created_at.slice(0, 10);
 const sumOf = (rows: Receipt[]) => rows.reduce((s, r) => s + Number(r.total), 0);
 
+/** Days as one number (UTC day count) for custom ranges; ISO strings sort the same way. */
+const dNum = (iso: string) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) / 864e5;
+const dIso = (n: number) => new Date(n * 864e5).toISOString().slice(0, 10);
+const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+const fmtDay = (iso: string, year: boolean) =>
+  `${Number(iso.slice(8, 10))} ${MON[Number(iso.slice(5, 7)) - 1]}${year ? ` ${iso.slice(0, 4)}` : ""}`;
+/** First and last day of a month index. */
+const monthStart = (m: number) => `${Math.floor(m / 12)}-${String((m % 12) + 1).padStart(2, "0")}-01`;
+const monthEnd = (m: number) => dIso(dNum(monthStart(m + 1)) - 1);
+
 const VIEW_KEY = "rs-range";
-function recallView(): { range: Range; offset: number } | null {
+type SavedView = { range: Range; offset: number; span?: Span };
+function recallView(): SavedView | null {
   try {
     const v = JSON.parse(sessionStorage.getItem(VIEW_KEY) ?? "null");
-    return v && [1, 3, 6, 12].includes(v.range) && Number.isInteger(v.offset) && v.offset >= 0 ? v : null;
+    if (!v || !Number.isInteger(v.offset) || v.offset < 0) return null;
+    if (v.range === "custom") return ISO_RE.test(v.span?.from) && ISO_RE.test(v.span?.to) ? v : null;
+    return [1, 3, 6, 12].includes(v.range) ? v : null;
   } catch {
     return null;
   }
+}
+
+/** Chart buckets for a custom span: days, weeks, months or years, whichever keeps ~4–24 bars. */
+function customBuckets(from: string, to: string) {
+  const a = dNum(from), b = dNum(to), days = b - a + 1;
+  const out: { from: string; to: string; label: string; title: string }[] = [];
+  let unit: "day" | "week" | "month" | "year";
+  if (days <= 14) {
+    unit = "day";
+    for (let n = a; n <= b; n++) { const d = dIso(n); out.push({ from: d, to: d, label: String(Number(d.slice(8, 10))), title: fmtDay(d, false) }); }
+  } else if (days <= 120) {
+    unit = "week";
+    for (let n = a; n <= b; n += 7) {
+      const s = dIso(n), e = dIso(Math.min(n + 6, b));
+      out.push({ from: s, to: e, label: fmtDay(s, false), title: `${fmtDay(s, false)} – ${fmtDay(e, false)}` });
+    }
+  } else if (days <= 3 * 366) {
+    unit = "month";
+    for (let m = mIndex(from); m <= mIndex(to); m++) {
+      const s = monthStart(m) < from ? from : monthStart(m), e = monthEnd(m) > to ? to : monthEnd(m);
+      out.push({ from: s, to: e, label: MON[m % 12], title: `${MON[m % 12]} ${Math.floor(m / 12)}` });
+    }
+  } else {
+    unit = "year";
+    for (let y = Number(from.slice(0, 4)); y <= Number(to.slice(0, 4)); y++) {
+      const s = `${y}-01-01` < from ? from : `${y}-01-01`, e = `${y}-12-31` > to ? to : `${y}-12-31`;
+      out.push({ from: s, to: e, label: String(y), title: String(y) });
+    }
+  }
+  // Keep about 7 labels so they never overlap.
+  const every = Math.ceil(out.length / 7);
+  out.forEach((o, i) => { if (i % every !== 0) o.label = ""; });
+  return { unit, buckets: out };
 }
 
 /** Animates a number toward its target (ease-out), for the big total. */
@@ -88,8 +139,11 @@ function Folder({ color, tab, className = "", style, children, bodyClass = "" }:
   );
 }
 
-export default function ExpenseList() {
+/** mode "mine": your own receipts. mode "club": everyone's (treasurer and viewers; RLS enforces it). */
+export default function ExpenseList({ mode = "mine" }: { mode?: "mine" | "club" }) {
   const router = useRouter();
+  const { me } = useShell();
+  const club = mode === "club" && me.seesClub;
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [categories, setCategories] = useState<Record<string, CategoryInfo>>({});
   const [loading, setLoading] = useState(true);
@@ -101,21 +155,28 @@ export default function ExpenseList() {
 
   const [range, setRange] = useState<Range>(() => recallView()?.range ?? 3);
   const [offset, setOffset] = useState(() => recallView()?.offset ?? 0);
+  const [span, setSpan] = useState<Span>(() => recallView()?.span ?? { from: monthStart(thisM - 2), to: monthEnd(thisM) });
   const [focus, setFocus] = useState<string | null>(null);
   const [bar, setBar] = useState<number | null>(null);
   const [tick, setTick] = useState(0); // replays entrance animations when the view changes
   const [compact, setCompact] = useState(false);
 
+  const [members, setMembers] = useState<Record<string, Pick<Profile, "display_name" | "email">>>({});
+  const [events, setEvents] = useState<ClubEvent[]>([]);
+  const [eventFilter, setEventFilter] = useState<string>("all");
+
   const load = useCallback(async () => {
     try {
-      const [r, c] = await Promise.all([
-        supabase
-          .from("receipts")
-          .select("*")
-          .order("receipt_date", { ascending: false, nullsFirst: false })
-          .order("created_at", { ascending: false }),
+      // RLS lets the treasurer and viewers read everyone's rows, so "mine" must filter by user explicitly.
+      let q = supabase.from("receipts").select("*");
+      if (!club) q = q.eq("user_id", me.id);
+      const [r, c, p, e] = await Promise.all([
+        q.order("receipt_date", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }),
         supabase.from("categories").select("id, name, color"),
+        club ? supabase.from("profiles").select("id, display_name, email") : Promise.resolve({ data: [] as Profile[] }),
+        club ? supabase.from("events").select("*").order("created_at", { ascending: false }) : Promise.resolve({ data: [] as ClubEvent[] }),
       ]);
+      setEvents((e.data ?? []) as ClubEvent[]);
       if (r.error) {
         setError("We couldn't load your receipts. Try again in a moment.");
         return;
@@ -125,12 +186,15 @@ export default function ExpenseList() {
       const map: Record<string, CategoryInfo> = {};
       (c.data ?? []).forEach((cat: CategoryInfo) => { map[cat.id] = cat; });
       setCategories(map);
+      const people: Record<string, Pick<Profile, "display_name" | "email">> = {};
+      (p.data ?? []).forEach((m) => { people[m.id] = m; });
+      setMembers(people);
     } catch {
       setError("Can't reach the server. Check your internet and try again.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [club, me.id]);
 
   useEffect(() => {
     const f = takeFlash();
@@ -146,8 +210,8 @@ export default function ExpenseList() {
   }, [load, thisM]);
 
   useEffect(() => {
-    try { sessionStorage.setItem(VIEW_KEY, JSON.stringify({ range, offset })); } catch { /* not remembered */ }
-  }, [range, offset]);
+    try { sessionStorage.setItem(VIEW_KEY, JSON.stringify({ range, offset, span })); } catch { /* not remembered */ }
+  }, [range, offset, span]);
 
   useEffect(() => {
     if (!highlight.length) return;
@@ -167,35 +231,54 @@ export default function ExpenseList() {
     [receipts, thisM],
   );
 
+  // Club view can be narrowed to one event ("none" = receipts without an event).
+  const pool = useMemo(
+    () => !club || eventFilter === "all" ? receipts : receipts.filter((r) => (r.event_id ?? "none") === eventFilter),
+    [receipts, club, eventFilter],
+  );
+
   const view = useMemo(() => {
-    const end = thisM - offset * range;
-    const start = end - range + 1;
-    const inRange = receipts.filter((r) => { const m = mIndex(dayIso(r)); return m >= start && m <= end; });
-    const total = sumOf(inRange);
     const keyOf = (r: Receipt) => r.category_id ?? "none";
-    const focused = focus ? inRange.filter((r) => keyOf(r) === focus) : inRange;
-
-    // Period label
-    const sy = Math.floor(start / 12), sm = start % 12, ey = Math.floor(end / 12), em = end % 12;
-    const label = range === 1
-      ? `${FULL[em]} ${ey}`
-      : sy === ey ? `${MON[sm]} – ${MON[em]} ${ey}` : `${MON[sm]} ${sy} – ${MON[em]} ${ey}`;
-
-    // Chart: weeks for 1M/3M, months for 6M/1Y
     const buckets: { rows: Receipt[]; label: string; title: string }[] = [];
-    for (let m = start; m <= end; m++) {
-      const mi = m % 12, y = Math.floor(m / 12);
-      const inMonth = inRange.filter((r) => mIndex(dayIso(r)) === m);
-      if (range <= 3) {
-        WEEKS.forEach(([a, b, wl], i) => buckets.push({
-          rows: inMonth.filter((r) => { const d = Number(dayIso(r).slice(8, 10)); return d >= a && d <= b; }),
-          label: range === 1 ? wl : i === 0 ? MON[mi] : "",
-          title: `${wl} ${MON[mi]}`,
-        }));
-      } else {
-        buckets.push({ rows: inMonth, label: range === 6 ? MON[mi] : MON[mi][0], title: `${MON[mi]} ${y}` });
+    let fromIso: string, toIso: string, label: string, unit: string, inRange: Receipt[];
+
+    if (range === "custom") {
+      fromIso = span.from; toIso = span.to;
+      inRange = pool.filter((r) => { const d = dayIso(r); return d >= fromIso && d <= toIso; });
+      const sameYear = fromIso.slice(0, 4) === toIso.slice(0, 4);
+      label = fromIso === toIso ? fmtDay(fromIso, true) : `${fmtDay(fromIso, !sameYear)} – ${fmtDay(toIso, true)}`;
+      const c = customBuckets(fromIso, toIso);
+      unit = c.unit;
+      c.buckets.forEach((b) => buckets.push({
+        rows: inRange.filter((r) => { const d = dayIso(r); return d >= b.from && d <= b.to; }), label: b.label, title: b.title,
+      }));
+    } else {
+      const end = thisM - offset * range;
+      const start = end - range + 1;
+      fromIso = monthStart(start); toIso = monthEnd(end);
+      inRange = pool.filter((r) => { const m = mIndex(dayIso(r)); return m >= start && m <= end; });
+      const sy = Math.floor(start / 12), sm = start % 12, ey = Math.floor(end / 12), em = end % 12;
+      label = range === 1
+        ? `${FULL[em]} ${ey}`
+        : sy === ey ? `${MON[sm]} – ${MON[em]} ${ey}` : `${MON[sm]} ${sy} – ${MON[em]} ${ey}`;
+      unit = range <= 3 ? "week" : "month";
+      // Chart: weeks for 1M/3M, months for 6M/1Y
+      for (let m = start; m <= end; m++) {
+        const mi = m % 12, y = Math.floor(m / 12);
+        const inMonth = inRange.filter((r) => mIndex(dayIso(r)) === m);
+        if (range <= 3) {
+          WEEKS.forEach(([a, b, wl], i) => buckets.push({
+            rows: inMonth.filter((r) => { const d = Number(dayIso(r).slice(8, 10)); return d >= a && d <= b; }),
+            label: range === 1 ? wl : i === 0 ? MON[mi] : "",
+            title: `${wl} ${MON[mi]}`,
+          }));
+        } else {
+          buckets.push({ rows: inMonth, label: range === 6 ? MON[mi] : MON[mi][0], title: `${MON[mi]} ${y}` });
+        }
       }
     }
+    const total = sumOf(inRange);
+    const focused = focus ? inRange.filter((r) => keyOf(r) === focus) : inRange;
     const max = Math.max(1, ...buckets.map((b) => sumOf(b.rows)));
 
     // Category tiles, biggest first
@@ -212,26 +295,39 @@ export default function ExpenseList() {
       };
     });
 
-    return { start, end, label, inRange, total, focused, focusedTotal: sumOf(focused), buckets, max, tiles, rows: layout?.rows, keyOf };
-  }, [receipts, categories, range, offset, focus, thisM]);
+    return { fromIso, toIso, label, unit, inRange, total, focused, focusedTotal: sumOf(focused), buckets, max, tiles, rows: layout?.rows, keyOf };
+  }, [pool, categories, range, offset, span, focus, thisM]);
 
   const shownTotal = useCountUp(view.focusedTotal);
   const [main, dec] = moneyParts(shownTotal);
-  const canPrev = view.start > earliest;
-  const canNext = offset > 0;
+  const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const earliestIso = monthStart(earliest);
+  const canPrev = view.fromIso > earliestIso;
+  const canNext = range === "custom" ? span.to < todayIso : offset > 0;
+  const isNow = range === "custom" ? span.to >= todayIso && span.from <= todayIso : offset === 0;
 
-  function change(patch: { range?: Range; offset?: number; focus?: string | null }) {
+  function change(patch: { range?: Range; offset?: number; span?: Span; focus?: string | null }) {
     if (patch.range !== undefined) setRange(patch.range);
     if (patch.offset !== undefined) setOffset(patch.offset);
+    if (patch.span !== undefined) setSpan(patch.span);
     if (patch.focus !== undefined) setFocus(patch.focus);
-    if (patch.range !== undefined || patch.offset !== undefined) setFocus(patch.focus ?? null);
+    if (patch.range !== undefined || patch.offset !== undefined || patch.span !== undefined) setFocus(patch.focus ?? null);
     setBar(null);
     setTick((t) => t + 1);
   }
 
-  async function logout() {
-    await supabase.auth.signOut();
-    router.replace("/login");
+  /** Arrows: presets step by their length; a custom span slides by its own length. */
+  function step(dir: -1 | 1) {
+    if (range !== "custom") { change({ offset: offset - dir }); return; }
+    const len = dNum(span.to) - dNum(span.from) + 1;
+    change({ span: { from: dIso(dNum(span.from) + dir * len), to: dIso(dNum(span.to) + dir * len) } });
+  }
+
+  function setCustom(edge: "from" | "to", value: string) {
+    if (!ISO_RE.test(value)) return;
+    const next = { ...span, [edge]: value };
+    if (next.from > next.to) { if (edge === "from") next.to = value; else next.from = value; }
+    change({ span: next });
   }
 
   async function undoDelete(row: Receipt) {
@@ -247,7 +343,7 @@ export default function ExpenseList() {
 
   const focusTile = focus ? view.tiles.find((t) => t.key === focus) : undefined;
   const focusColor = focusTile?.style.color;
-  const unit = range <= 3 ? "week" : "month";
+  const unit = view.unit;
   const sel = bar !== null && view.buckets[bar] ? view.buckets[bar] : null;
   const selSum = sel ? sumOf(focus ? sel.rows.filter((r) => view.keyOf(r) === focus) : sel.rows) : 0;
 
@@ -263,7 +359,6 @@ export default function ExpenseList() {
     if (last && last.day === d) last.items.push(r);
     else groups.push({ day: d, items: [r] });
   });
-  const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const yd = new Date(now); yd.setDate(now.getDate() - 1);
   const yesterdayIso = `${yd.getFullYear()}-${String(yd.getMonth() + 1).padStart(2, "0")}-${String(yd.getDate()).padStart(2, "0")}`;
   const dayLabel = (iso: string) => iso === todayIso ? "Today" : iso === yesterdayIso ? "Yesterday"
@@ -281,18 +376,23 @@ export default function ExpenseList() {
         />
       )}
 
-      <div className="flex flex-1 flex-col gap-5 px-5 pb-36 pt-[max(24px,env(safe-area-inset-top))] md:px-10 md:pb-16 md:pt-10 lg:px-12">
-        <header className="flex items-center justify-between">
-          <h1 className="text-[30px] font-semibold tracking-[-0.03em] md:text-[36px]">Expenses</h1>
-          <div className="flex gap-2">
-            <Link href="/scan"
-              className="tap hidden h-11 items-center gap-2 rounded-full bg-fg pl-4 pr-5 text-[15px] font-semibold text-bg md:flex">
-              <Icon d={ICONS.camera} size={20} stroke={1.9} /> Scan receipt
-            </Link>
-            <ThemeToggle />
-            <RoundButton icon={ICONS.logout} aria-label="Log out" onClick={logout} />
+      <div className="flex flex-1 flex-col gap-5 px-5 pb-36 pt-5 md:px-10 md:pb-16 md:pt-7 lg:px-12">
+        {/* Club view: narrow down to one event */}
+        {club && events.length > 0 && (
+          <div className="no-scrollbar -mx-5 -mb-1 flex gap-2 overflow-x-auto px-5 md:mx-0 md:px-0" role="group" aria-label="Event">
+            {[{ id: "all", name: "All events" }, ...events.map((e) => ({ id: e.id, name: e.name })), { id: "none", name: "No event" }].map((e) => {
+              const on = eventFilter === e.id;
+              return (
+                <button key={e.id} type="button" aria-pressed={on}
+                  onClick={() => { if (!on) { setEventFilter(e.id); change({}); } }}
+                  className={`tap flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition-colors ${on ? "bg-fg text-bg" : "bg-surface text-muted"}`}>
+                  {e.id !== "all" && e.id !== "none" && <Icon d={ICONS.flag} size={13} stroke={2} />}
+                  {e.name}
+                </button>
+              );
+            })}
           </div>
-        </header>
+        )}
 
         {loading ? (
           <div className="flex flex-1 items-center justify-center py-24 text-muted" role="status">
@@ -309,30 +409,76 @@ export default function ExpenseList() {
             {/* Left (or top on phones): range, total, chart, tiles */}
             <div className="flex flex-col gap-5 md:sticky md:top-8">
               {/* Range picker with a sliding pill */}
-              <div role="tablist" aria-label="Time range" className="relative grid grid-cols-4 rounded-2xl bg-surface p-1">
-                <span aria-hidden="true"
-                  className="ease-ios absolute bottom-1 left-1 top-1 w-[calc((100%-8px)/4)] rounded-xl bg-fg transition-transform duration-[400ms]"
-                  style={{ transform: `translateX(${RANGES.findIndex((r) => r.v === range) * 100}%)` }} />
+              <div role="tablist" aria-label="Time range" className="relative grid grid-cols-[1fr_1fr_1fr_1fr_1.5fr] rounded-2xl bg-surface p-1">
+                {(() => {
+                  // Four equal columns and a wider "Custom": the pill follows the selected column's size.
+                  // left/width use % of the bar (translateX % would be % of the pill itself).
+                  const i = RANGES.findIndex((r) => r.v === range);
+                  const unitW = "((100% - 8px) / 5.5)";
+                  return (
+                    <span aria-hidden="true"
+                      className="ease-ios absolute bottom-1 top-1 rounded-xl bg-fg transition-[left,width] duration-[400ms]"
+                      style={{ width: `calc(${unitW} * ${i === 4 ? 1.5 : 1})`, left: `calc(4px + ${unitW} * ${i})` }} />
+                  );
+                })()}
                 {RANGES.map((r) => (
                   <button key={r.v} type="button" role="tab" aria-selected={r.v === range} aria-label={r.long}
-                    onClick={() => r.v !== range && change({ range: r.v, offset: 0 })}
+                    onClick={() => {
+                      if (r.v === range) return;
+                      // Custom starts from whatever period is on screen, so it feels continuous.
+                      if (r.v === "custom") change({ range: r.v, span: { from: view.fromIso, to: view.toIso > todayIso ? todayIso : view.toIso } });
+                      else change({ range: r.v, offset: 0 });
+                    }}
                     className={`relative h-[38px] text-sm font-semibold transition-colors duration-300 ${r.v === range ? "text-bg" : "text-muted"}`}>
                     {r.label}
                   </button>
                 ))}
               </div>
 
+              {/* Custom dates: any length, from one day to many years */}
+              {range === "custom" && (
+                <div className="anim-pop -mt-2 flex flex-col gap-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["from", "to"] as const).map((edge) => (
+                      <label key={edge} className="field-card flex flex-col rounded-2xl bg-surface px-3.5 py-2">
+                        <span className="text-[11px] font-medium uppercase tracking-wide text-muted">{edge === "from" ? "From" : "To"}</span>
+                        <input type="date" value={span[edge]} min={edge === "to" ? span.from : undefined} max={edge === "from" ? span.to : undefined}
+                          onChange={(e) => setCustom(edge, e.target.value)}
+                          aria-label={edge === "from" ? "Start date" : "End date"}
+                          className="h-7 w-full bg-transparent text-[15px] font-medium tabular-nums outline-none" />
+                      </label>
+                    ))}
+                  </div>
+                  <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5 md:mx-0 md:px-0">
+                    {[
+                      { label: "Last 7 days", span: { from: dIso(dNum(todayIso) - 6), to: todayIso } },
+                      { label: "Last 30 days", span: { from: dIso(dNum(todayIso) - 29), to: todayIso } },
+                      { label: "This year", span: { from: `${todayIso.slice(0, 4)}-01-01`, to: todayIso } },
+                      { label: "All time", span: { from: earliestIso, to: todayIso } },
+                    ].map((q) => {
+                      const on = q.span.from === span.from && q.span.to === span.to;
+                      return (
+                        <button key={q.label} type="button" aria-pressed={on} onClick={() => !on && change({ span: q.span })}
+                          className={`tap h-8 shrink-0 rounded-full px-3.5 text-[13px] font-medium transition-colors ${on ? "bg-fg text-bg" : "bg-surface text-muted"}`}>
+                          {q.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Period with previous / next */}
               <div className="-my-1 flex items-center justify-between">
-                <button type="button" onClick={() => canPrev && change({ offset: offset + 1 })} disabled={!canPrev} aria-label="Earlier period"
+                <button type="button" onClick={() => canPrev && step(-1)} disabled={!canPrev} aria-label="Earlier period"
                   className="tap flex h-11 w-11 items-center justify-center rounded-full disabled:opacity-25">
                   <Icon d={ICONS.back} size={18} stroke={2.2} />
                 </button>
                 <p key={`p${tick}`} aria-live="polite" className="anim-pop text-[15px] font-semibold">
                   {view.label}
-                  {offset === 0 && <span className="ml-2 rounded-full bg-brand px-2 py-0.5 align-[2px] text-[11px] font-semibold text-ink">Now</span>}
+                  {isNow && <span className="ml-2 rounded-full bg-brand px-2 py-0.5 align-[2px] text-[11px] font-semibold text-ink">Now</span>}
                 </p>
-                <button type="button" onClick={() => canNext && change({ offset: offset - 1 })} disabled={!canNext} aria-label="Later period"
+                <button type="button" onClick={() => canNext && step(1)} disabled={!canNext} aria-label="Later period"
                   className="tap flex h-11 w-11 items-center justify-center rounded-full disabled:opacity-25">
                   <Icon d={ICONS.chevron} size={18} stroke={2.2} />
                 </button>
@@ -362,7 +508,7 @@ export default function ExpenseList() {
                     {sel ? `${sel.title} · ฿${money(selSum)}` : `Avg ฿${money(view.focusedTotal / view.buckets.length)} / ${unit}`}
                   </p>
                 </div>
-                <div className="mt-3.5 flex h-[124px] items-end border-b border-line" style={{ gap: view.buckets.length > 6 ? 5 : 10 }}>
+                <div className="mt-3.5 flex h-[124px] items-end border-b border-line" style={{ gap: view.buckets.length > 24 ? 2 : view.buckets.length > 6 ? 5 : 10 }}>
                   {view.buckets.map((b, i) => {
                     const all = sumOf(b.rows);
                     const part = focus ? sumOf(b.rows.filter((r) => view.keyOf(r) === focus)) : all;
@@ -382,7 +528,7 @@ export default function ExpenseList() {
                     );
                   })}
                 </div>
-                <div className="mt-1.5 flex" style={{ gap: view.buckets.length > 6 ? 5 : 10 }} aria-hidden="true">
+                <div className="mt-1.5 flex" style={{ gap: view.buckets.length > 24 ? 2 : view.buckets.length > 6 ? 5 : 10 }} aria-hidden="true">
                   {view.buckets.map((b, i) => (
                     <span key={i} className="min-w-0 flex-1 whitespace-nowrap text-center text-[11px] text-muted">{b.label}</span>
                   ))}
@@ -460,9 +606,21 @@ export default function ExpenseList() {
                                 </span>
                                 <span className="flex min-w-0 flex-1 flex-col">
                                   <span className="truncate text-[15px] font-medium leading-snug">{r.shop_name || "Unknown shop"}</span>
-                                  <span className="text-[13px] leading-snug text-muted">{cat?.name ?? "No category"}</span>
+                                  <span className="truncate text-[13px] leading-snug text-muted">
+                                    {club ? `${r.user_id === me.id ? "You" : memberName(members[r.user_id])} · ` : ""}{cat?.name ?? "No category"}
+                                  </span>
                                 </span>
-                                <span className="shrink-0 text-[15px] font-semibold tabular-nums">฿{money(Number(r.total))}</span>
+                                <span className="flex shrink-0 flex-col items-end gap-0.5">
+                                  <span className="text-[15px] font-semibold tabular-nums">฿{money(Number(r.total))}</span>
+                                  {(() => {
+                                    const st = STATUS[asStatus(r.status)];
+                                    return (
+                                      <span className="flex items-center gap-1 text-[11px] font-medium" style={{ color: r.status === "rejected" ? st.fg : "var(--muted)" }}>
+                                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: st.dot }} />{st.short}
+                                      </span>
+                                    );
+                                  })()}
+                                </span>
                               </Link>
                             </li>
                           );

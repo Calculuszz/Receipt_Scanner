@@ -24,6 +24,15 @@ export const ICONS = {
   mail: "M3.5 6.5h17v11a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5z M3.5 7l8.5 6.5L20.5 7",
   warn: "M12 4 2.8 19.5h18.4z M12 10v4 M12 17v.01",
   file: "M6 3h8l4 4v14H6z M14 3v4h4",
+  bell: "M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z M10 20.5a2 2 0 0 0 4 0",
+  inbox: "M3.5 13.5 6 5h12l2.5 8.5V19a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19z M3.5 13.5H8l1.5 2.5h5l1.5-2.5h4.5",
+  users: "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z M2.5 20a6.5 6.5 0 0 1 13 0 M16 4.3a3.5 3.5 0 0 1 0 6.4 M18 14.5a6.5 6.5 0 0 1 3.5 5.5",
+  chart: "M4 20V10 M10 20V4 M16 20v-7 M21.5 20h-19",
+  home: "M3.5 10.5 12 3.5l8.5 7V20a1 1 0 0 1-1 1H15v-6H9v6H4.5a1 1 0 0 1-1-1z",
+  plus: "M12 5v14 M5 12h14",
+  download: "M12 4v11 M7.5 10.5 12 15l4.5-4.5 M4 19.5h16",
+  pencil: "M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4",
+  flag: "M5 21V4 M5 4h11l-2 4 2 4H5",
 } as const;
 
 type CategoryStyle = { color: string; icon: string; short: string };

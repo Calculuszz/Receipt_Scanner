@@ -1,11 +1,14 @@
-// Home page: this month's spending and the receipts list
+// Home: your own spending and receipts, with their review status
 import AuthGuard from "@/components/AuthGuard";
+import AppShell from "@/components/AppShell";
 import ExpenseList from "@/components/ExpenseList";
 
 export default function Home() {
   return (
     <AuthGuard>
-      <ExpenseList />
+      <AppShell title="My receipts">
+        <ExpenseList mode="mine" />
+      </AppShell>
     </AuthGuard>
   );
 }
