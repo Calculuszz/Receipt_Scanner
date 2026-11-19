@@ -39,6 +39,24 @@ export type Database = {
         }
         Relationships: []
       }
+      club_allowlist: {
+        Row: {
+          added_at: string
+          added_by: string | null
+          email: string
+        }
+        Insert: {
+          added_at?: string
+          added_by?: string | null
+          email: string
+        }
+        Update: {
+          added_at?: string
+          added_by?: string | null
+          email?: string
+        }
+        Relationships: []
+      }
       club_roles: {
         Row: {
           added_at: string
@@ -87,6 +105,33 @@ export type Database = {
           id?: string
           name?: string
           starts_on?: string | null
+        }
+        Relationships: []
+      }
+      memberships: {
+        Row: {
+          decided_at: string | null
+          decided_by: string | null
+          digest_sent_at: string | null
+          requested_at: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          decided_at?: string | null
+          decided_by?: string | null
+          digest_sent_at?: string | null
+          requested_at?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          decided_at?: string | null
+          decided_by?: string | null
+          digest_sent_at?: string | null
+          requested_at?: string
+          status?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -223,20 +268,29 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      add_allowed_emails: { Args: { emails: string[] }; Returns: Json }
       can_see_club: { Args: never; Returns: boolean }
+      claim_membership: { Args: never; Returns: string }
       club_members: {
         Args: never
         Returns: {
+          decided_at: string
           display_name: string
           email: string
           id: string
           is_admin: boolean
           joined_at: string
           receipts: number
+          requested_at: string
+          status: string
         }[]
       }
+      is_active_member: { Args: never; Returns: boolean }
       is_admin: { Args: never; Returns: boolean }
+      remove_allowed_email: { Args: { target: string }; Returns: undefined }
+      request_membership: { Args: never; Returns: string }
       set_admin: { Args: { make_admin: boolean; target: string }; Returns: undefined }
+      set_membership: { Args: { new_status: string; target: string }; Returns: undefined }
     }
     Enums: {
       [_ in never]: never

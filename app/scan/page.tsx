@@ -1,5 +1,6 @@
 "use client";
 
+import { loadMe, type MemberStatus } from "@/lib/admin";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -81,8 +82,33 @@ async function findDuplicates(supabase: Client, userId: string, drafts: ReceiptD
 export default function ScanPage() {
   return (
     <AuthGuard>
-      <ScanScreen />
+      <MembersOnly>
+        <ScanScreen />
+      </MembersOnly>
     </AuthGuard>
+  );
+}
+
+/** Scanning costs money, so only active club members get the camera; the API and database refuse others too. */
+function MembersOnly({ children }: { children: React.ReactNode }) {
+  const [status, setStatus] = useState<MemberStatus | null>(null);
+  useEffect(() => {
+    let live = true;
+    void loadMe(createClient()).then((me) => { if (live) setStatus(me?.status ?? "pending"); });
+    return () => { live = false; };
+  }, []);
+  if (status === null) {
+    return <div className="flex min-h-screen items-center justify-center text-muted" role="status"><Spinner size={28} /><span className="sr-only">Loading</span></div>;
+  }
+  if (status === "active") return <>{children}</>;
+  return (
+    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center gap-3 px-6 text-center">
+      <p className="text-xl font-semibold">{status === "removed" ? "You're no longer an active member" : "You're not in the club yet"}</p>
+      <p className="text-[15px] text-muted">
+        {status === "removed" ? "Only active club members can send receipts." : "A club admin needs to let you in before you can scan receipts."}
+      </p>
+      <Link href="/" className="tap mt-3 flex h-12 items-center rounded-full bg-surface px-5 text-[15px] font-medium">Back</Link>
+    </div>
   );
 }
 

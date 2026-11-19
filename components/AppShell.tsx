@@ -10,9 +10,10 @@ import { loadMe, type Me } from "@/lib/admin";
 import type { AppNotification } from "@/lib/types";
 import { ICONS } from "@/lib/ui";
 import { Icon, RoundButton, Spinner, ThemeToggle, Toast } from "@/components/ui";
+import JoinGate from "@/components/JoinGate";
 
 /** bump goes up on every live notification, so pages can reload their data. */
-type Shell = { me: Me; pending: number; bump: number; refreshCounts: () => void };
+type Shell = { me: Me; pending: number; joinRequests: number; bump: number; refreshCounts: () => Promise<void> };
 const ShellContext = createContext<Shell | null>(null);
 
 /** The signed-in person and their role. Only usable inside <AppShell>. */
@@ -22,13 +23,13 @@ export function useShell(): Shell {
   return ctx;
 }
 
-type Tab = { href: string; label: string; icon: string; show: (me: Me) => boolean; badge?: "pending" };
+type Tab = { href: string; label: string; icon: string; show: (me: Me) => boolean; badge?: "pending" | "join" };
 const TABS: Tab[] = [
   { href: "/", label: "My receipts", icon: ICONS.home, show: () => true },
   { href: "/review", label: "Review", icon: ICONS.inbox, show: (me) => me.admin, badge: "pending" },
   { href: "/club", label: "Club", icon: ICONS.users, show: (me) => me.admin },
   { href: "/reports", label: "Reports", icon: ICONS.chart, show: (me) => me.admin },
-  { href: "/members", label: "Members", icon: ICONS.shield, show: (me) => me.admin },
+  { href: "/members", label: "Members", icon: ICONS.shield, show: (me) => me.admin, badge: "join" },
 ];
 
 export default function AppShell({ title, children }: { title: string; children: React.ReactNode }) {
@@ -37,6 +38,7 @@ export default function AppShell({ title, children }: { title: string; children:
   const [me, setMe] = useState<Me | null>(null);
   const [unread, setUnread] = useState(0);
   const [pending, setPending] = useState(0);
+  const [joinRequests, setJoinRequests] = useState(0);
   const [toast, setToast] = useState<AppNotification | null>(null);
   const [bump, setBump] = useState(0);
 
@@ -44,14 +46,19 @@ export default function AppShell({ title, children }: { title: string; children:
     const who = await loadMe(supabase);
     if (!who) { router.replace("/login"); return; }
     setMe(who);
-    const [n, p] = await Promise.all([
+    const [n, p, j] = await Promise.all([
       supabase.from("notifications").select("id", { count: "exact", head: true }).eq("user_id", who.id).is("read_at", null),
       who.admin
         ? supabase.from("receipts").select("id", { count: "exact", head: true }).eq("status", "pending")
         : Promise.resolve({ count: 0 }),
+      // People waiting to join: shown as a badge (no push for each one; admins get a daily summary instead).
+      who.admin
+        ? supabase.from("memberships").select("user_id", { count: "exact", head: true }).eq("status", "pending")
+        : Promise.resolve({ count: 0 }),
     ]);
     setUnread(n.count ?? 0);
     setPending(p.count ?? 0);
+    setJoinRequests(j.count ?? 0);
   }, [router]);
 
   useEffect(() => {
@@ -93,22 +100,26 @@ export default function AppShell({ title, children }: { title: string; children:
   const openToast = () => {
     if (!toast) return;
     const t = toast; setToast(null);
-    router.push(t.receipt_id ? `/receipts/${t.receipt_id}` : "/notifications");
+    router.push(t.kind === "join_requests" ? "/members" : t.receipt_id ? `/receipts/${t.receipt_id}` : "/notifications");
   };
+  // Waiting or declined: no app yet, just the join screen (the database blocks everything else anyway).
+  const gated = me.status === "pending" || me.status === "rejected";
 
   return (
-    <ShellContext.Provider value={{ me, pending, bump, refreshCounts }}>
+    <ShellContext.Provider value={{ me, pending, joinRequests, bump, refreshCounts }}>
       {toast && (
         <Toast key={toast.id} text={toast.title} ms={5000} actionLabel="Open" onAction={openToast} onDone={() => setToast(null)} />
       )}
       <div className="mx-auto w-full max-w-md px-5 pt-[max(24px,env(safe-area-inset-top))] md:max-w-6xl md:px-10 md:pt-10 lg:px-12">
         <header className="flex items-center justify-between gap-3">
-          <h1 className="truncate text-[30px] font-semibold tracking-[-0.03em] md:text-[36px]">{title}</h1>
+          <h1 className="truncate text-[30px] font-semibold tracking-[-0.03em] md:text-[36px]">{gated ? "Receipt Scanner" : title}</h1>
           <div className="flex shrink-0 gap-2">
-            <Link href="/scan"
-              className="tap hidden h-11 items-center gap-2 rounded-full bg-fg pl-4 pr-5 text-[15px] font-semibold text-bg md:flex">
-              <Icon d={ICONS.camera} size={20} stroke={1.9} /> Scan receipt
-            </Link>
+            {me.active && (
+              <Link href="/scan"
+                className="tap hidden h-11 items-center gap-2 rounded-full bg-fg pl-4 pr-5 text-[15px] font-semibold text-bg md:flex">
+                <Icon d={ICONS.camera} size={20} stroke={1.9} /> Scan receipt
+              </Link>
+            )}
             <Link href="/notifications" aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
               className="tap relative flex h-11 w-11 items-center justify-center rounded-full bg-surface">
               <Icon d={ICONS.bell} />
@@ -129,7 +140,7 @@ export default function AppShell({ title, children }: { title: string; children:
             <ul className="flex gap-5">
               {tabs.map((t) => {
                 const on = t.href === "/" ? path === "/" : path.startsWith(t.href);
-                const count = t.badge === "pending" ? pending : 0;
+                const count = t.badge === "pending" ? pending : t.badge === "join" ? joinRequests : 0;
                 return (
                   <li key={t.href}>
                     <Link href={t.href} aria-current={on ? "page" : undefined}
@@ -147,8 +158,14 @@ export default function AppShell({ title, children }: { title: string; children:
             </ul>
           </nav>
         )}
+
+        {me.status === "removed" && (
+          <p role="note" className="mt-4 rounded-[18px] bg-surface px-4 py-3 text-[14px] text-muted">
+            You&apos;re no longer an active club member. You can still see your past receipts, but you can&apos;t send new ones.
+          </p>
+        )}
       </div>
-      {children}
+      {gated ? <JoinGate /> : children}
     </ShellContext.Provider>
   );
 }

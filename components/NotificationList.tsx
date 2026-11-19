@@ -15,6 +15,8 @@ const KIND: Record<string, { icon: string; color: string }> = {
   paid: { icon: ICONS.check, color: "var(--ok)" },
   over_budget: { icon: ICONS.flag, color: "var(--danger)" },
   role: { icon: ICONS.shield, color: "#0EB6F2" },
+  membership: { icon: ICONS.users, color: "#0EB6F2" },
+  join_requests: { icon: ICONS.users, color: "#F5A524" },
 };
 
 function ago(ts: string) {
@@ -48,7 +50,8 @@ export default function NotificationList() {
       await supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("id", n.id);
       refreshCounts();
     }
-    router.push(n.receipt_id && n.kind !== "over_budget" ? `/receipts/${n.receipt_id}` : n.kind === "over_budget" ? "/reports" : "/");
+    router.push(n.kind === "join_requests" ? "/members" : n.kind === "over_budget" ? "/reports"
+      : n.receipt_id ? `/receipts/${n.receipt_id}` : "/");
   }
 
   async function readAll() {

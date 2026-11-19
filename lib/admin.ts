@@ -3,7 +3,9 @@ import type { Profile, ReceiptStatus } from "@/lib/types";
 
 /** member: sends receipts. admin: the treasurer (there can be several); reviews, pays back, manages admins. */
 export type Role = "member" | "admin";
-export type Me = { id: string; role: Role; admin: boolean };
+/** pending: waiting for an admin · active: in the club · rejected: declined · removed: left or was taken out */
+export type MemberStatus = "pending" | "active" | "rejected" | "removed";
+export type Me = { id: string; role: Role; admin: boolean; status: MemberStatus; active: boolean };
 
 /**
  * Who is signed in, and what is their club role?
@@ -12,9 +14,14 @@ export type Me = { id: string; role: Role; admin: boolean };
 export async function loadMe(client: SupabaseClient): Promise<Me | null> {
   const { data: { user } } = await client.auth.getUser();
   if (!user) return null;
-  const { data } = await client.from("club_roles").select("role").eq("user_id", user.id).maybeSingle();
-  const role: Role = data?.role === "admin" ? "admin" : "member";
-  return { id: user.id, role, admin: role === "admin" };
+  // claim_membership() also lets you in when your verified email is on the club's allowed list.
+  const [{ data }, { data: claimed }] = await Promise.all([
+    client.from("club_roles").select("role").eq("user_id", user.id).maybeSingle(),
+    client.rpc("claim_membership"),
+  ]);
+  const status: MemberStatus = claimed === "active" || claimed === "rejected" || claimed === "removed" ? claimed : "pending";
+  const role: Role = data?.role === "admin" && status === "active" ? "admin" : "member";
+  return { id: user.id, role, admin: role === "admin", status, active: status === "active" };
 }
 
 /** A short, friendly name for a member: display name, else the part of the email before @. */
